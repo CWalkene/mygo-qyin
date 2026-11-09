@@ -6,8 +6,8 @@
   "out": "build",
   "resources": ["LICENSE", "THIRD_PARTY_NOTICES.md", "README.md"],
   "updates": {
-    "publicKey": "vNnYE6P6rNrupbggTNO1do2zPVVucUBpE0px82vyCHQ=",
-    "github": "Amamiya23/mygo-qyin"
+    "publicKey": "4MYHRPaByPnU80lF0aCZ1vB7pROD6Fxsve7Ijj6wh84=",
+    "github": "CWalkene/mygo-qyin"
   },
   "macos": {
     "icon": "icon/AppIcon.icns",
