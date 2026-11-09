@@ -67,16 +67,23 @@ jobs:
       - name: Extract release notes
         env:
           RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
 
           version="${RELEASE_TAG#v}"
 
+          # 提取当前版本的说明，并将上游 Release 下载链接
+          # 改为当前仓库的链接，不修改致谢等其他上游链接。
           awk -v heading="## $version" '
             { sub(/\r$/, "") }
             /^## / { inside = ($0 == heading); next }
             inside { print }
-          ' CHANGELOG.md | sed '/./,$!d' > "$RUNNER_TEMP/notes.md"
+          ' CHANGELOG.md \
+            | sed '/./,$!d' \
+            | sed \
+                "s|https://github.com/Amamiya23/mygo-qyin/releases/download/|https://github.com/${RELEASE_REPO}/releases/download/|g" \
+            > "$RUNNER_TEMP/notes.md"
 
           if ! grep -q '[^[:space:]]' "$RUNNER_TEMP/notes.md"; then
             echo "::error::CHANGELOG.md 缺少 ## $version 的非空更新说明。"
