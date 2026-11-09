@@ -108,7 +108,9 @@ jobs:
           git fetch --no-tags "$UPSTREAM_URL" "refs/tags/$tag"
           upstream_commit="$(git rev-parse 'FETCH_HEAD^{commit}')"
 
-          if ! git merge --no-edit "$upstream_commit"; then
+          if ! git merge \
+            -m "chore(sync): merge upstream $tag" \
+            "$upstream_commit"; then
             echo "::error::合并冲突。未推送任何修改，请手动处理后重新运行。"
             git merge --abort || true
             exit 1
