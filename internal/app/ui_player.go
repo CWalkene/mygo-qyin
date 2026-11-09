@@ -197,26 +197,45 @@ func (a *app) tickTimes(c *ui.Context) {
 	}
 }
 
-// volumeButton is the speaker, which opens the volume in a popover above
-// it, as an AppKit popover: a native slider standing up, the volume in
-// percent over it. The wheel over the speaker turns it up and down
-// without opening it.
+type volumeHover struct {
+	hovered, pinned bool
+	left            time.Time
+}
+
+// volumeButton 悬停时显示音量浮层，点击后固定展开，滚轮直接调节音量。
 func (a *app) volumeButton(c *ui.Context, color ui.Color) {
 	surface := playerSurface
 	if a.volumeOpen {
 		surface = playerSelectedSurface
 	}
-	b := iconButton(c.Key("volume-button"), volumeIcon(a.volume), 16, color, "音量", surface)
-	if b.Clicked() {
-		a.volumeOpen = !a.volumeOpen
+	b := iconButton(c.Key("volume-button"), volumeIcon(a.volume), 16, color, "", surface).Label("音量")
+	s := ui.Local(b, "hover", func() volumeHover { return volumeHover{} })
+	hovered := b.Hovered()
+	if hovered && !s.hovered {
+		a.volumeOpen = true
+	}
+	s.hovered = hovered
+	clicked := b.Clicked()
+	if clicked {
+		s.pinned = !s.pinned
+		a.volumeOpen = s.pinned
 	}
 	b.HandleInput(func(ev ui.InputEvent) bool { return a.scrollVolume(ev) })
 	pop := popoverColors(a.pal.dark)
-	ui.PopoverBase(c.Key("volume-popover"), b, &a.volumeOpen, func(panel ui.Element) {
+	dragging := false
+	panel := ui.PopoverBase(c.Key("volume-popover"), b, &a.volumeOpen, func(panel ui.Element) {
 		const arrow = 7
 		panel.AttachTo(b, ui.AnchorTop, ui.AnchorBottom).Margin(0, 0, arrow+3, 0).Width(52).Padding(11, 0, 12, 0).
 			Radius(12).Background(pop.fill).Border(0.5, pop.edge).Shadow(0, 8, 24, -4, radixInk.Alpha(0.2)).
-			AlignItems(ui.Center).Gap(8).Label("音量")
+			AlignItems(ui.Center).Gap(8).Label("音量").
+			Transition(ui.ElementTransition{
+				Duration: 180 * time.Millisecond, Ease: ui.EaseOut,
+				ExitDuration: 140 * time.Millisecond, ExitEase: ui.EaseIn,
+				Enter: &ui.Motion{Y: 4},
+				Exit:  &ui.Motion{Y: 3},
+			})
+		// 透明区域衔接按钮与浮层，鼠标经过间隙时保持展开。
+		ui.Box(c.Key("volume-bridge")).Absolute().Left(0).Right(0).Bottom(-arrow - 3).Height(arrow + 3)
 		panel.Draw(func(p *ui.Painter, r ui.Rect) {
 			// The arrow pointing at the speaker, its sides edged as the
 			// panel is, over the panel's border.
@@ -229,8 +248,34 @@ func (a *app) volumeButton(c *ui.Context, color ui.Color) {
 			p.StrokePath(edge, 0.5, pop.edge)
 		})
 		ui.Textf(c, "%d%%", int(a.volume*100+0.5)).FontSize(11).FontWeight(500).FontFeatures("tnum").TextColor(a.pal.muted)
-		a.nativeVolumeSlider(c, pop)
+		slider := a.nativeVolumeSlider(c, pop)
+		if clicked && s.pinned {
+			slider.Focus()
+		}
+		button, pressed := slider.PressedButton()
+		dragging = pressed && button == 0
 	})
+	panelHovered := panel.Hovered()
+	if !a.volumeOpen {
+		s.pinned = false
+		s.left = time.Time{}
+		return
+	}
+	if s.pinned || hovered || panelHovered || dragging {
+		s.left = time.Time{}
+		return
+	}
+	now := c.Now()
+	if s.left.IsZero() {
+		s.left = now
+	}
+	if wait := 100*time.Millisecond - now.Sub(s.left); wait > 0 {
+		c.After(wait)
+	} else {
+		a.volumeOpen = false
+		s.left = time.Time{}
+		c.Invalidate()
+	}
 }
 
 // popover holds the colors of a popover as AppKit draws them.
@@ -244,10 +289,10 @@ func popoverColors(dark bool) popover {
 
 // nativeVolumeSlider is a vertical slider as AppKit draws one: a thin
 // track, filled with the accent from the foot to a round knob.
-func (a *app) nativeVolumeSlider(c *ui.Context, pop popover) {
+func (a *app) nativeVolumeSlider(c *ui.Context, pop popover) ui.Element {
 	const knob, track = 20, 4
 	s := ui.SliderBase(c.Key("volume"), &a.volume, 0, 1).Vertical().Size(knob+8, 124).PaddingY(knob / 2).
-		Step(0.01).AutoFocus().FocusRing(false).Label("音量")
+		Step(0.01).FocusRing(false).Label("音量")
 	if s.Changed() {
 		a.pl.SetVolume(a.volume)
 	}
@@ -271,6 +316,7 @@ func (a *app) nativeVolumeSlider(c *ui.Context, pop popover) {
 		p.Fill(k, fill, knob/2)
 		p.Stroke(k, radixInk.Alpha(0.08), knob/2, 0.5)
 	})
+	return s
 }
 
 // scrollVolume turns the volume up as the wheel or the fingers scroll up.
