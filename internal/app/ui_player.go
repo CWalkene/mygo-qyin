@@ -202,6 +202,15 @@ type volumeHover struct {
 	left            time.Time
 }
 
+type popoverFrost struct {
+	glass.ScrollEdge
+}
+
+func (m popoverFrost) PaintMaterial(p *ui.Painter, box ui.Rect, radii [4]float32) {
+	// 滚动边缘的分隔线位于边界外，浮层只保留框内的磨砂效果。
+	p.Clip(box, 0, func() { m.ScrollEdge.PaintMaterial(p, box, radii) })
+}
+
 // volumeButton 悬停时显示音量浮层，点击后固定展开，滚轮直接调节音量。
 func (a *app) volumeButton(c *ui.Context, color ui.Color) {
 	surface := playerSurface
@@ -222,11 +231,12 @@ func (a *app) volumeButton(c *ui.Context, color ui.Color) {
 	}
 	b.HandleInput(func(ev ui.InputEvent) bool { return a.scrollVolume(ev) })
 	pop := popoverColors(a.pal.dark)
+	material := popoverFrost{glass.ScrollEdge{Hard: true, Bottom: true, Background: a.pal.bg}}
 	dragging := false
 	panel := ui.PopoverBase(c.Key("volume-popover"), b, &a.volumeOpen, func(panel ui.Element) {
 		const arrow = 7
 		panel.AttachTo(b, ui.AnchorTop, ui.AnchorBottom).Margin(0, 0, arrow+3, 0).Width(52).Padding(11, 0, 12, 0).
-			Radius(12).Background(pop.fill).Border(0.5, pop.edge).Shadow(0, 8, 24, -4, radixInk.Alpha(0.2)).
+			Radius(12).Material(material).Border(0.5, pop.edge).Shadow(0, 8, 24, -4, radixInk.Alpha(0.2)).
 			AlignItems(ui.Center).Gap(8).Label("音量").
 			Transition(ui.ElementTransition{
 				Duration: 180 * time.Millisecond, Ease: ui.EaseOut,
@@ -242,7 +252,9 @@ func (a *app) volumeButton(c *ui.Context, color ui.Color) {
 			cx, foot := r.X+r.W/2, r.Y+r.H
 			tip := (&ui.Path{}).MoveTo(cx-arrow-1, foot-0.75).LineTo(cx-1.2, foot+arrow-1.2).
 				QuadTo(cx, foot+arrow, cx+1.2, foot+arrow-1.2).LineTo(cx+arrow+1, foot-0.75).Close()
-			p.FillPath(tip, pop.fill)
+			p.ClipPath(tip, func() {
+				material.PaintMaterial(p, ui.Rect{X: cx - arrow - 1, Y: foot - 0.75, W: 2*arrow + 2, H: arrow + 0.75}, [4]float32{})
+			})
 			edge := (&ui.Path{}).MoveTo(cx-arrow-1, foot).LineTo(cx-1.2, foot+arrow-1.2).
 				QuadTo(cx, foot+arrow, cx+1.2, foot+arrow-1.2).LineTo(cx+arrow+1, foot)
 			p.StrokePath(edge, 0.5, pop.edge)
