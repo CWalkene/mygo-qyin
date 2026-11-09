@@ -4,7 +4,11 @@
   "slug": "lilt",
   "version": "0.4.1",
   "out": "build",
-  "resources": ["LICENSE", "THIRD_PARTY_NOTICES.md", "README.md"],
+  "resources": [
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md",
+    "README.md"
+  ],
   "updates": {
     "publicKey": "4MYHRPaByPnU80lF0aCZ1vB7pROD6Fxsve7Ijj6wh84=",
     "github": "CWalkene/mygo-qyin"
@@ -15,7 +19,11 @@
   },
   "linux": {
     "comment": "第三方 QQ 音乐原生桌面客户端",
-    "categories": ["AudioVideo", "Audio", "Player"],
+    "categories": [
+      "AudioVideo",
+      "Audio",
+      "Player"
+    ],
     "webview": false
   }
 }
