@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: read
+  actions: write
 
 concurrency:
   group: follow-upstream-tags
@@ -89,7 +90,7 @@ jobs:
             exit 0
           fi
 
-          # 保留原版已有的公钥和更新仓库检查。
+          # 同步前确认 main 已配置自己的公钥和更新仓库。
           jq -e \
             --arg key "$MY_PUBLIC_KEY" \
             --arg repo "$MY_UPDATE_REPO" \
@@ -111,20 +112,20 @@ jobs:
           if ! git merge \
             -m "chore(sync): merge upstream $tag" \
             "$upstream_commit"; then
-            echo "::error::合并冲突。未推送任何修改，请手动处理后重新运行。"
+            echo "::error::合并失败，可能存在冲突。未推送任何修改，请手动处理后重新运行。"
             git merge --abort || true
             exit 1
           fi
 
-          # 新增保护：成功合并后保留自己原来的工作流。
-          # 上游 Actions 的变更需要以后自行审查、手动引入。
+          # 成功合并后保留自己原来的工作流。
+          # 上游 Actions 的变更需要自行审查、手动引入。
           git restore \
             --source="$fork_head" \
             --staged \
             --worktree \
             -- .github/workflows
 
-          # 保留原版已有的公钥和更新仓库恢复逻辑。
+          # 保留自己的公钥和更新仓库。
           jq \
             --arg key "$MY_PUBLIC_KEY" \
             --arg repo "$MY_UPDATE_REPO" \
@@ -157,7 +158,7 @@ jobs:
 
           if ! git diff --cached --quiet; then
             git commit \
-              -m "Keep fork update configuration and workflows for $tag"
+              -m "chore(sync): preserve fork configuration for $tag"
           fi
 
           # Tag 指向包含自己配置和工作流的最终代码。
@@ -165,6 +166,11 @@ jobs:
 
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      # 清理逻辑依赖此固定名称，无输出，但不要删除或随意改名。
+      - name: Mark no-update run
+        if: steps.sync.outputs.changed == 'false'
+        run: ":"
 
       - name: Push branch and tag atomically
         if: steps.sync.outputs.changed == 'true'
@@ -198,3 +204,93 @@ jobs:
             echo "- 已保留自己的 Actions"
             echo "- 已原子推送 main 和 Tag"
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Clean old no-update runs
+        # 静默清理；错误仍保留，且不影响已经成功的同步。
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          CURRENT_RUN_ID: ${{ github.run_id }}
+          WORKFLOW_FILE: upstream-tag.yml
+          KEEP_DAYS: "3"
+        run: |
+          set -euo pipefail
+
+          cutoff="$(date -u -d "$KEEP_DAYS days ago" '+%Y-%m-%dT%H:%M:%SZ')"
+
+          # 先收集候选，再删除，避免删除过程中影响分页。
+          gh api --paginate \
+            "repos/$GH_REPO/actions/workflows/$WORKFLOW_FILE/runs?branch=main&status=success&per_page=100" \
+            --jq '.workflow_runs[] | {
+              id,
+              updated_at,
+              run_attempt,
+              event
+            }' \
+            > "$RUNNER_TEMP/sync-runs.jsonl"
+
+          jq -r \
+            --arg cutoff "$cutoff" \
+            --arg current "$CURRENT_RUN_ID" \
+            '
+              select(
+                (.id | tostring) != $current and
+                .updated_at < $cutoff and
+                .run_attempt == 1 and
+                (.event == "schedule" or .event == "workflow_dispatch")
+              )
+              | .id
+            ' "$RUNNER_TEMP/sync-runs.jsonl" \
+            > "$RUNNER_TEMP/cleanup-candidates.txt"
+
+          while IFS= read -r run_id; do
+            [[ -n "$run_id" ]] || continue
+
+            gh api --paginate --slurp \
+              "repos/$GH_REPO/actions/runs/$run_id/jobs?filter=all&per_page=100" \
+              > "$RUNNER_TEMP/run-jobs.json"
+
+            # 必须有成功的无更新标记，且未成功执行推送。
+            # 无法确认的记录一律保留。
+            if ! jq -e '
+              [.[].jobs[]] as $jobs
+              | (
+                  ($jobs | length) > 0
+                  and all($jobs[]; .conclusion == "success")
+                  and any(
+                    $jobs[].steps[]?;
+                    .name == "Mark no-update run"
+                    and .conclusion == "success"
+                  )
+                  and (
+                    any(
+                      $jobs[].steps[]?;
+                      .name == "Push branch and tag atomically"
+                      and .conclusion == "success"
+                    ) | not
+                  )
+                )
+            ' "$RUNNER_TEMP/run-jobs.json" > /dev/null; then
+              continue
+            fi
+
+            # 删除前再次确认，保留已重新运行或状态变化的记录。
+            gh api \
+              "repos/$GH_REPO/actions/runs/$run_id" \
+              > "$RUNNER_TEMP/run-state.json"
+
+            if ! jq -e \
+              --arg cutoff "$cutoff" \
+              '
+                .status == "completed" and
+                .conclusion == "success" and
+                .run_attempt == 1 and
+                .updated_at < $cutoff
+              ' "$RUNNER_TEMP/run-state.json" > /dev/null; then
+              continue
+            fi
+
+            gh api --method DELETE \
+              "repos/$GH_REPO/actions/runs/$run_id" > /dev/null
+          done < "$RUNNER_TEMP/cleanup-candidates.txt"
