@@ -2,7 +2,7 @@ name: Follow upstream tags
 
 on:
   schedule:
-    # 北京时间每天 04:43
+    # 北京时间每天 04:43。
     - cron: "43 20 * * *"
   workflow_dispatch:
 
@@ -13,69 +13,100 @@ concurrency:
   group: follow-upstream-tags
   cancel-in-progress: false
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   sync-and-tag:
+    name: Sync upstream and create tag
+
+    # 避免手动选择其他分支后，执行不同分支中的同步逻辑。
+    if: github.ref == 'refs/heads/main'
+
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
-      - name: Checkout my fork
-        uses: actions/checkout@v4
-        with:
-          ref: main
-          fetch-depth: 0
-          token: ${{ secrets.UPSTREAM_SYNC_TOKEN }}
-
-      - name: Merge latest upstream tag and create my tag
-        shell: bash
+      - name: Check sync token
         env:
-          UPSTREAM_URL: https://github.com/Amamiya23/mygo-qyin.git
-          MY_PUBLIC_KEY: "4MYHRPaByPnU80lF0aCZ1vB7pROD6Fxsve7Ijj6wh84="
-          MY_UPDATE_REPO: "CWalkene/mygo-qyin"
+          SYNC_TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN }}
         run: |
           set -euo pipefail
 
+          if [[ -z "$SYNC_TOKEN" ]]; then
+            echo "::error::缺少 UPSTREAM_SYNC_TOKEN。"
+            exit 1
+          fi
+
+      - name: Checkout fork
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Merge latest upstream tag and create fork tag
+        id: sync
+        env:
+          UPSTREAM_URL: https://github.com/Amamiya23/mygo-qyin.git
+          MY_PUBLIC_KEY: 4MYHRPaByPnU80lF0aCZ1vB7pROD6Fxsve7Ijj6wh84=
+          MY_UPDATE_REPO: CWalkene/mygo-qyin
+        run: |
+          set -euo pipefail
+
+          echo "changed=false" >> "$GITHUB_OUTPUT"
+
           git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
 
-          # 按版本号排序，只选择 v数字.数字.数字 形式的正式版。
-          # 不把上游 Tag 直接导入自己的 tags 命名空间。
-          upstream_tags=$(git ls-remote --tags --refs "$UPSTREAM_URL")
+          # 只选择 v数字.数字.数字 形式的正式版。
+          upstream_tags="$(git ls-remote --tags --refs "$UPSTREAM_URL")"
 
-          tag=$(
+          tag="$(
             printf '%s\n' "$upstream_tags" \
-              | awk '{sub("refs/tags/", "", $2); print $2}' \
+              | awk '{ sub("^refs/tags/", "", $2); print $2 }' \
               | { grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' || true; } \
               | sort -V \
               | tail -n 1
-          )
+          )"
 
-          if [ -z "$tag" ]; then
+          if [[ -z "$tag" ]]; then
             echo "上游没有符合格式的正式版 Tag。"
+            echo "上游没有符合格式的正式版 Tag。" >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
 
           echo "上游最新正式版 Tag：$tag"
 
-          # 自己仓库已有同名 Tag 时，不移动、不覆盖。
-          own_tag=$(git ls-remote --tags --refs origin "refs/tags/$tag")
-          if [ -n "$own_tag" ]; then
+          # 已存在的 Tag 不移动、不覆盖。
+          own_tag="$(git ls-remote --tags --refs origin "refs/tags/$tag")"
+
+          if [[ -n "$own_tag" ]]; then
             echo "自己的仓库已有 $tag，本次跳过。"
+            echo "已存在 \`$tag\`，本次跳过。" >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
 
-          # 合并前先验证自己的配置，避免使用错误的密钥配置。
+          # 保留原版已有的公钥和更新仓库检查。
           jq -e \
             --arg key "$MY_PUBLIC_KEY" \
             --arg repo "$MY_UPDATE_REPO" \
-            '.updates.publicKey == $key and .updates.github == $repo' \
-            mygo.json > /dev/null || {
+            '
+              .updates.publicKey == $key and
+              .updates.github == $repo
+            ' mygo.json > /dev/null || {
               echo "::error::请先修正 main 中的公钥和更新仓库配置。"
               exit 1
             }
 
+          # 记录同步前自己的版本，稍后用于恢复自己的 Actions。
+          fork_head="$(git rev-parse HEAD)"
+
           # 只获取这个上游 Tag 的代码，不复制它的 Tag 引用。
           git fetch --no-tags "$UPSTREAM_URL" "refs/tags/$tag"
-          upstream_commit=$(git rev-parse 'FETCH_HEAD^{commit}')
+          upstream_commit="$(git rev-parse 'FETCH_HEAD^{commit}')"
 
           if ! git merge --no-edit "$upstream_commit"; then
             echo "::error::合并冲突。未推送任何修改，请手动处理后重新运行。"
@@ -83,42 +114,85 @@ jobs:
             exit 1
           fi
 
-          # 合并成功后，明确保留自己的公钥和更新来源。
+          # 新增保护：成功合并后保留自己原来的工作流。
+          # 上游 Actions 的变更需要以后自行审查、手动引入。
+          git restore \
+            --source="$fork_head" \
+            --staged \
+            --worktree \
+            -- .github/workflows
+
+          # 保留原版已有的公钥和更新仓库恢复逻辑。
           jq \
             --arg key "$MY_PUBLIC_KEY" \
             --arg repo "$MY_UPDATE_REPO" \
-            '.updates.publicKey = $key | .updates.github = $repo' \
-            mygo.json > "$RUNNER_TEMP/mygo.json"
+            '
+              .updates.publicKey = $key |
+              .updates.github = $repo
+            ' mygo.json > "$RUNNER_TEMP/mygo.json"
 
           cat "$RUNNER_TEMP/mygo.json" > mygo.json
 
-          # 对应现有 release.yml 的版本检查。
-          version=$(jq -r '.version' mygo.json)
-          if [ "v$version" != "$tag" ]; then
+          version="$(jq -er '.version | strings | select(length > 0)' mygo.json)"
+
+          if [[ "v$version" != "$tag" ]]; then
             echo "::error::合并后版本 v$version 与 $tag 不一致，停止发布。"
             exit 1
           fi
 
-          # 对应现有 release.yml 的更新日志检查。
           awk -v heading="## $version" '
+            { sub(/\r$/, "") }
             /^## / { inside = ($0 == heading); next }
-            inside
+            inside { print }
           ' CHANGELOG.md | sed '/./,$!d' > "$RUNNER_TEMP/notes.md"
 
-          if ! test -s "$RUNNER_TEMP/notes.md"; then
+          if ! grep -q '[^[:space:]]' "$RUNNER_TEMP/notes.md"; then
             echo "::error::CHANGELOG.md 缺少该版本的非空更新说明。"
             exit 1
           fi
 
-          git add mygo.json
+          git add mygo.json .github/workflows
+
           if ! git diff --cached --quiet; then
-            git commit -m "Keep fork update configuration for $tag"
+            git commit \
+              -m "Keep fork update configuration and workflows for $tag"
           fi
 
-          # 新 Tag 指向合并后的代码，包含自己的修改。
+          # Tag 指向包含自己配置和工作流的最终代码。
           git tag "$tag" HEAD
 
-          # 不强制推送。远程分支有并发更新时会失败，而非覆盖。
-          git push --atomic origin \
-            HEAD:refs/heads/main \
-            "refs/tags/$tag:refs/tags/$tag"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Push branch and tag atomically
+        if: steps.sync.outputs.changed == 'true'
+        env:
+          SYNC_TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN }}
+          RELEASE_TAG: ${{ steps.sync.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          # 仅在推送步骤使用 PAT，不持久化到 Git 配置。
+          auth="$(
+            printf 'x-access-token:%s' "$SYNC_TOKEN" \
+              | base64 \
+              | tr -d '\r\n'
+          )"
+
+          echo "::add-mask::$auth"
+
+          # 不强推。分支有并发更新或 Tag 已出现时整体失败。
+          git \
+            -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" \
+            push --atomic origin \
+              HEAD:refs/heads/main \
+              "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
+
+          {
+            echo "## 同步成功"
+            echo
+            echo "- 上游版本：\`$RELEASE_TAG\`"
+            echo "- 已保留自己的公钥和更新仓库"
+            echo "- 已保留自己的 Actions"
+            echo "- 已原子推送 main 和 Tag"
+          } >> "$GITHUB_STEP_SUMMARY"
