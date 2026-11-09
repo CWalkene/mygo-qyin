@@ -6,37 +6,122 @@ on:
 permissions:
   contents: read
 
+# 同一分支的手动构建排队执行，不中途取消签名构建。
+concurrency:
+  group: manual-build-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
 jobs:
   build:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { name: macOS, os: macos-latest, platform: "darwin/arm64,darwin/amd64" }
-          - { name: Windows, os: ubuntu-latest, platform: "windows/amd64,windows/arm64" }
-          - { name: Linux, os: ubuntu-latest, platform: "linux/amd64,linux/arm64" }
+          - name: macOS
+            os: macos-latest
+            platform: darwin/arm64,darwin/amd64
+
+          - name: Windows
+            os: ubuntu-latest
+            platform: windows/amd64,windows/arm64
+
+          - name: Linux
+            os: ubuntu-latest
+            platform: linux/amd64,linux/arm64
+
+    env:
+      CGO_ENABLED: "0"
+
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - name: Checkout source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Check signing key and update repository
+        env:
+          MYGO_UPDATER_PRIVATE_KEY: ${{ secrets.MYGO_UPDATER_PRIVATE_KEY }}
+          EXPECTED_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "$MYGO_UPDATER_PRIVATE_KEY" ]]; then
+            echo "::error::缺少 MYGO_UPDATER_PRIVATE_KEY。"
+            exit 1
+          fi
+
+          jq -e \
+            --arg repo "$EXPECTED_REPO" \
+            '.updates.github == $repo' \
+            mygo.json > /dev/null || {
+              echo "::error::mygo.json 中的更新仓库不是当前仓库。"
+              exit 1
+            }
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            vendor/modules.txt
+
       - name: Install NSIS
         if: matrix.name == 'Windows'
-        run: sudo apt-get update && sudo apt-get install -y nsis
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends nsis
+
       - name: Build signed packages
         env:
-          CGO_ENABLED: "0"
+          PLATFORMS: ${{ matrix.platform }}
           MYGO_UPDATER_PRIVATE_KEY: ${{ secrets.MYGO_UPDATER_PRIVATE_KEY }}
+          # 只读 Token，供 MyGo 查询历史版本、生成增量更新。
+          GH_TOKEN: ${{ github.token }}
         run: |
-          test -n "$MYGO_UPDATER_PRIVATE_KEY" || { echo "Missing update signing key" >&2; exit 1; }
-          go tool mygo build -platform "${{ matrix.platform }}"
-          for target in $(echo "${{ matrix.platform }}" | tr "," " " | tr "/" "-"); do
-            test -f "build/$target/update-$target.json" || { echo "Missing signed update manifest for $target" >&2; exit 1; }
+          set -euo pipefail
+
+          go tool mygo build -platform "$PLATFORMS"
+
+          version="$(jq -er '.version' mygo.json)"
+
+          IFS=',' read -ra targets <<< "$PLATFORMS"
+
+          for platform in "${targets[@]}"; do
+            target="${platform//\//-}"
+            manifest="build/$target/update-$target.json"
+
+            if [[ ! -s "$manifest" ]]; then
+              echo "::error::缺少签名更新清单：$manifest"
+              exit 1
+            fi
+
+            jq -e \
+              --arg version "$version" \
+              '
+                .version == $version and
+                (.signature | type == "string" and length > 0) and
+                (.size | type == "number" and . > 0)
+              ' "$manifest" > /dev/null || {
+                echo "::error::更新清单检查失败：$manifest"
+                exit 1
+              }
           done
+
+          test -s build/SHA256SUMS
+
       - name: Save build artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-${{ matrix.name }}
           path: |
@@ -51,3 +136,5 @@ jobs:
             build/*/install.ps1
           if-no-files-found: error
           retention-days: 7
+          compression-level: 0
+          overwrite: true
