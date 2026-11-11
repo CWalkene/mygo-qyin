@@ -29,6 +29,8 @@ type settings struct {
 	DesktopLyricsColor string `json:"desktopLyricsColor,omitempty"`
 	// TaskbarLyrics embeds a separate compact lyric view in the Windows taskbar.
 	TaskbarLyrics bool `json:"taskbarLyrics,omitempty"`
+	// TaskbarLyricsMaterial selects white or acrylic (also when empty) for the song panel.
+	TaskbarLyricsMaterial string `json:"taskbarLyricsMaterial,omitempty"`
 	// LyricsMode keeps the preferred location independently of its enabled state.
 	LyricsMode string `json:"lyricsMode,omitempty"`
 	// NotchActivity shows the cover and the music's levels beside the
@@ -66,7 +68,7 @@ type settings struct {
 	StageSparks bool `json:"stageSparks,omitempty"`
 	// Volume is where the volume was left, from 0 to 1.
 	Volume float64 `json:"volume"`
-	// PlaybackFade smooths pause and resume operations.
+	// PlaybackFade smooths pause, resume and application shutdown.
 	PlaybackFade bool `json:"playbackFade"`
 	// Normalize is the old volume-balance switch, kept so installs saved
 	// before the mode selector can still be read.

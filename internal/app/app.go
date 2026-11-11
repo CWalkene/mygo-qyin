@@ -236,6 +236,15 @@ func (a *app) redraw() {
 
 var invalidateWindow = (*mygo.Window).Invalidate
 
+// resumeMainWindow rebuilds playback UI from the audio clock instead of
+// presenting the frame cached before minimization. Focus is also a resume
+// signal: Wayland does not consistently report iconified/restored states.
+func (a *app) resumeMainWindow() {
+	if a.win != nil {
+		invalidateWindow(a.win)
+	}
+}
+
 // playerChanged keeps every window in sync, including seeks while paused.
 func (a *app) playerChanged() {
 	a.syncSongFans()
@@ -343,9 +352,14 @@ func Run() error {
 		// does.
 		a.syncDock()
 		a.win.OnShow(a.syncDock)
+		a.win.OnShow(a.resumeMainWindow)
 		a.win.OnHide(a.syncDock)
+		a.win.OnRestore(a.resumeMainWindow)
 		// Shown or switched to the morning after, it shows the new day's.
-		a.win.OnFocus(a.freshenHome)
+		a.win.OnFocus(func() {
+			a.freshenHome()
+			a.resumeMainWindow()
+		})
 		a.applyTray()
 		a.syncDesktopLyrics()
 		a.syncTaskbarLyrics()
@@ -355,15 +369,7 @@ func Run() error {
 		// Closing the window follows the listener's choice. Without a tray
 		// or Dock to bring it back, closing it always quits.
 		a.win.OnClose(func(e *mygo.CloseEvent) {
-			if a.quitting {
-				return
-			}
-			e.PreventDefault()
-			if !a.settings.QuitOnClose && a.canHideOnClose() {
-				a.win.Hide()
-			} else {
-				mygo.App.Quit()
-			}
+			a.mainWindowClose(e, a.win.Hide, mygo.App.Quit)
 		})
 	})
 	mygo.App.OnBeforeQuit(func(*mygo.QuitEvent) {
@@ -389,6 +395,9 @@ func Run() error {
 			a.tray.Destroy()
 		}
 	})
+	// The event loop has stopped: no UI callbacks can start another track.
+	// This also runs before an updater relaunch releases the process.
+	mygo.App.OnQuit(a.finishAudio)
 	mygo.App.OnWindowAllClosed(func() {})
 	// The Dock icon's click, and the launch another instance handed over
 	// above, as the shortcut's while the window hides in the tray.
