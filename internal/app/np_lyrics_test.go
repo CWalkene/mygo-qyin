@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/egoist/mygo"
+	"github.com/egoist/mygo/audio"
 	"github.com/egoist/mygo/ui"
 
 	"lilt/internal/lyrics"
@@ -162,9 +163,8 @@ func TestQRCLyricsFrames(t *testing.T) {
 	}
 }
 
-// Scrolling the lyrics stops them following the line sung; "回到当前" brings
-// it back and follows again, as choosing a line to sing from does.
-func TestLyricsBrowseAndFollowAgain(t *testing.T) {
+// 浏览时换行不会打断阅读，最后一次滚动满三秒后恢复跟随。
+func TestLyricsFollowAfterIdle(t *testing.T) {
 	frames := os.Getenv("NM_FRAMES")
 	if frames != "" {
 		if err := os.MkdirAll(frames, 0o755); err != nil {
@@ -172,75 +172,128 @@ func TestLyricsBrowseAndFollowAgain(t *testing.T) {
 		}
 	}
 	for _, reduceMotion := range []bool{false, true} {
-		t.Run(fmt.Sprintf("reduce-motion=%t", reduceMotion), func(t *testing.T) {
-			a := newTestApp()
-			a.settings = defaultSettings()
-			a.pl.Cue([]qqmusic.Track{{ID: 7, Duration: 400000}})
-			var lrc string
-			for i := 0; i < 24; i++ {
-				lrc += fmt.Sprintf("[%02d:%02d.00]第%d句歌词\n", i/2, i%2*30, i)
-			}
-			a.pl.SetLyrics(lyrics.Build(lrc, "", ""))
-			a.pl.Hold(time.Second)
-			tt := ui.NewTester(func(c *ui.Context) {
-				ui.Column(c).Size(600, 500).Background(radixSage(true, 1)).Children(func() { a.lyricsPane(c, a.pl.Current(), 500) })
-			}, 600, 500)
-			tt.SetPreferences(ui.Preferences{ReduceMotion: reduceMotion})
-			tt.Advance(time.Second)
-			if _, ok := tt.Find("回到当前"); ok || a.lyricBrowse {
-				t.Fatal("following lyrics offered to follow again")
-			}
+		for _, captions := range []bool{false, true} {
+			t.Run(fmt.Sprintf("reduce-motion=%t/captions=%t", reduceMotion, captions), func(t *testing.T) {
+				a := newTestApp()
+				a.settings = defaultSettings()
+				a.pl.Cue([]qqmusic.Track{{ID: 7, Duration: 400000}})
+				if captions {
+					a = captionsTestApp(t, true)
+					a.settings.Captions = true
+					a.captions.program = 42
+					a.captions.model = modelState{checked: true, installed: true}
+				}
+				var lrc string
+				for i := 0; i < 24; i++ {
+					lrc += fmt.Sprintf("[%02d:%02d.00]第%d句歌词\n", i/2, i%2*30, i)
+				}
+				a.pl.SetLyrics(lyrics.Build(lrc, "", ""))
+				a.captions.lines = lyrics.Build(lrc, "", "")
+				a.pl.Hold(time.Second)
+				tt := ui.NewTester(func(c *ui.Context) {
+					ui.Column(c).Size(600, 500).Background(radixSage(true, 1)).Children(func() {
+						if captions {
+							a.captionsPane(c, a.pl.Current(), 500)
+						} else {
+							a.lyricsPane(c, a.pl.Current(), 500)
+						}
+					})
+				}, 600, 500)
+				tt.SetPreferences(ui.Preferences{ReduceMotion: reduceMotion})
+				tt.Advance(time.Second)
+				if _, ok := tt.Find("回到当前"); ok || !a.lyricBrowseUntil.IsZero() {
+					t.Fatal("following lyrics offered to follow again")
+				}
 
-			tt.Scroll(300, 250, 0, 400)
-			tt.Advance(time.Second)
-			browsed := a.lyricScroll.Y
-			if !a.lyricBrowse || browsed <= 0 {
-				t.Fatalf("scrolling did not leave the line sung: browse=%v y=%v", a.lyricBrowse, browsed)
-			}
-			if _, ok := tt.Find("回到上方的当前歌词"); !ok {
-				t.Fatal("the line sung, scrolled above, is not pointed up to")
-			}
-			if frames != "" {
-				saveLyricsEntryFrame(t, frames, fmt.Sprintf("lyrics-browse-up-%t.png", reduceMotion), tt)
-			}
-			// A line further on begins: the lyrics stay where the listener
-			// reads, and the button points down to it.
-			a.pl.Hold(5 * time.Minute)
-			tt.Frame()
-			tt.Advance(2 * time.Second)
-			if a.lyricScroll.Y != browsed || a.lyricAt == 10 {
-				t.Fatalf("browsed lyrics followed the line sung: y=%v (was %v) line=%d", a.lyricScroll.Y, browsed, a.lyricAt)
-			}
-			if frames != "" {
-				saveLyricsEntryFrame(t, frames, fmt.Sprintf("lyrics-browse-down-%t.png", reduceMotion), tt)
-			}
-			if err := tt.Click("回到下方的当前歌词"); err != nil {
-				t.Fatal(err)
-			}
-			tt.Advance(2 * time.Second)
-			if a.lyricBrowse || a.lyricAt != 10 {
-				t.Fatalf("follow again: browse=%v line=%d", a.lyricBrowse, a.lyricAt)
-			}
-			if r, ok := tt.Find("第10句歌词"); !ok || r.Y < 0 || r.Y+r.H > 500 {
-				t.Fatalf("line sung is outside the pane: %+v, found=%v", r, ok)
-			}
-			if _, ok := tt.Find("回到当前"); ok {
-				t.Fatal("button stayed after following again")
-			}
+				tt.Scroll(300, 250, 0, 400)
+				tt.Advance(time.Second)
+				browsed := a.lyricScroll.Y
+				if a.lyricBrowseUntil.IsZero() || browsed <= 0 {
+					t.Fatalf("滚动后未暂停跟随：截止时间=%v y=%v", a.lyricBrowseUntil, browsed)
+				}
+				if _, ok := tt.Find("回到当前"); ok {
+					t.Fatal("浏览时仍显示手动返回按钮")
+				}
+				if frames != "" {
+					saveLyricsEntryFrame(t, frames, fmt.Sprintf("lyrics-browse-up-%t.png", reduceMotion), tt)
+				}
+				// 播放位置变化不会重置浏览计时，也不会立即拉回当前行。
+				a.pl.Hold(5 * time.Minute)
+				tt.Frame()
+				tt.Advance(time.Second)
+				if a.lyricScroll.Y != browsed || a.lyricAt == 10 {
+					t.Fatalf("browsed lyrics followed the line sung: y=%v (was %v) line=%d", a.lyricScroll.Y, browsed, a.lyricAt)
+				}
+				if frames != "" {
+					saveLyricsEntryFrame(t, frames, fmt.Sprintf("lyrics-browse-down-%t.png", reduceMotion), tt)
+				}
+				tt.Scroll(300, 250, 0, 100)
+				browsed = a.lyricScroll.Y
+				tt.Advance(2999 * time.Millisecond)
+				if a.lyricBrowseUntil.IsZero() || a.lyricScroll.Y != browsed {
+					t.Fatal("再次滚动未重新计时，或未满三秒就恢复跟随")
+				}
+				tt.Advance(time.Millisecond)
+				if !a.lyricBrowseUntil.IsZero() || a.lyricAt != 10 {
+					t.Fatalf("三秒后未恢复跟随：截止时间=%v line=%d", a.lyricBrowseUntil, a.lyricAt)
+				}
+				tt.Advance(time.Second)
+				if r, ok := tt.Find("第10句歌词"); !ok || r.Y < 0 || r.Y+r.H > 500 {
+					t.Fatalf("line sung is outside the pane: %+v, found=%v", r, ok)
+				}
+				if _, ok := tt.Find("回到当前"); ok {
+					t.Fatal("button stayed after following again")
+				}
 
-			// Scrolled away again, a line clicked is sung from and followed.
-			tt.Scroll(300, 250, 0, -200)
-			tt.Advance(time.Second)
-			if !a.lyricBrowse {
-				t.Fatal("scrolling back did not leave the line sung")
-			}
-			if err := tt.Click("第8句歌词"); err != nil {
-				t.Fatal(err)
-			}
-			tt.Advance(2 * time.Second)
-			if a.lyricBrowse || a.lyricAt != 8 || a.pl.Position() != 4*time.Minute {
-				t.Fatalf("clicked line: browse=%v line=%d position=%v", a.lyricBrowse, a.lyricAt, a.pl.Position())
-			}
-		})
+				// 当前行尚未变化时，播放中超时也必须回到该行。
+				tt.Scroll(300, 250, 0, -200)
+				tt.Advance(3 * time.Second)
+				if !a.lyricBrowseUntil.IsZero() || a.lyricAt != 10 {
+					t.Fatal("当前行未变化时未自动恢复跟随")
+				}
+				tt.Advance(time.Second)
+				if r, ok := tt.Find("第10句歌词"); !ok || r.Y < 0 || r.Y+r.H > 500 {
+					t.Fatalf("超时后当前行不在可视范围内：%+v, found=%v", r, ok)
+				}
+
+				tt.Scroll(300, 250, 0, -200)
+				tt.Advance(time.Second)
+				if a.lyricBrowseUntil.IsZero() {
+					t.Fatal("scrolling back did not leave the line sung")
+				}
+				if err := tt.Click("第9句歌词"); err != nil {
+					t.Fatal(err)
+				}
+				tt.Advance(2 * time.Second)
+				if !a.lyricBrowseUntil.IsZero() || a.lyricAt != 9 || a.pl.Position() != 270*time.Second {
+					t.Fatalf("点击歌词：截止时间=%v line=%d position=%v", a.lyricBrowseUntil, a.lyricAt, a.pl.Position())
+				}
+
+				out := audio.NewPlayer(&silence{})
+				defer out.Close()
+				a.pl.Attach(out)
+				a.pl.PlaybackFade = func() bool { return false }
+				for _, idle := range []time.Duration{time.Second, 10 * time.Second} {
+					a.pl.TogglePlay()
+					a.pl.Seek(90 * time.Second)
+					tt.Frame()
+					tt.Advance(time.Second)
+					tt.Scroll(300, 250, 0, 400)
+					browsed = a.lyricScroll.Y
+					tt.Advance(idle)
+					tt.Frame()
+					if a.pl.Playing() || a.lyricBrowseUntil.IsZero() || a.lyricScroll.Y != browsed {
+						t.Fatal("暂停时浏览歌词仍被自动拉回")
+					}
+
+					a.pl.Hold(90 * time.Second)
+					tt.Frame()
+					if !a.lyricBrowseUntil.IsZero() || a.lyricAt != 3 {
+						t.Fatalf("暂停浏览 %v 后恢复播放未立即跟随", idle)
+					}
+					tt.Advance(time.Second)
+				}
+			})
+		}
 	}
 }

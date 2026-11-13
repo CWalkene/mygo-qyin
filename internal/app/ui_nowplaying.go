@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/egoist/mygo"
-	"github.com/egoist/mygo/plugins/glass"
 	"github.com/egoist/mygo/ui"
 
 	"lilt/internal/lyrics"
@@ -557,7 +556,7 @@ func (a *app) lyricsPane(c *ui.Context, tr *qqmusic.Track, h float32) {
 	}
 	if a.lyricTrack != tr.ID {
 		a.lyricTrack, a.lyricAt = tr.ID, -2
-		a.lyricScroll, a.lyricGlide, a.lyricBrowse = ui.ScrollState{}, lyricGlide{}, false
+		a.lyricScroll, a.lyricGlide, a.lyricBrowseUntil = ui.ScrollState{}, lyricGlide{}, time.Time{}
 	}
 	lag := a.lyricStep(c)
 
@@ -683,16 +682,10 @@ func (a *app) timedLines(c *ui.Context, scroll ui.Element, lines []lyrics.Line, 
 		}
 		return min(max(0, lb.Y-box.Y+a.lyricScroll.Y-box.H*0.3), a.lyricScroll.MaxY), true
 	}
-	if a.lyricBrowse && !st.quiet {
-		y, _ := followY()
-		if lyricsFollowButton(c.Key("lyrics-follow"), y < a.lyricScroll.Y).Clicked() {
-			a.lyricBrowse, a.lyricAt = false, -2
-		}
-	}
 	if seeked {
 		// A line chosen is sung from: the lyrics follow it again, once the
 		// next frame finds it lit.
-		a.lyricBrowse, a.lyricAt = false, -2
+		a.lyricBrowseUntil, a.lyricAt = time.Time{}, -2
 		c.AnimationFrame()
 		return
 	}
@@ -702,7 +695,7 @@ func (a *app) timedLines(c *ui.Context, scroll ui.Element, lines []lyrics.Line, 
 	}
 	// Bring the line sung to a third of the way down, once it changed,
 	// unless the listener scrolled away to read on their own.
-	if cur != a.lyricAt && !a.lyricBrowse {
+	if cur != a.lyricAt && a.lyricBrowseUntil.IsZero() {
 		target, ok := followY()
 		if !ok {
 			return // not laid out yet: the next frame scrolls
@@ -789,58 +782,26 @@ func (g *lyricGlide) step(c *ui.Context, s *ui.ScrollState) (lag float32, scroll
 	return float32(at), false
 }
 
-// lyricStep steps the glide of the lyrics or captions, and leaves the line
-// sung to the listener once they scroll.
+// 手动滚动后暂缓跟随，暂停时保留浏览位置，播放时按最后一次滚动计时。
 func (a *app) lyricStep(c *ui.Context) float32 {
 	lag, scrolled := a.lyricGlide.step(c, &a.lyricScroll)
+	playing := a.pl.Playing()
+	resumed := playing && !a.lyricPlaying
+	a.lyricPlaying = playing
 	if scrolled {
-		a.lyricBrowse = true
+		a.lyricBrowseUntil = c.Now().Add(3 * time.Second)
+	}
+	if resumed {
+		a.lyricBrowseUntil, a.lyricAt = time.Time{}, -2
+	}
+	if !a.lyricBrowseUntil.IsZero() && playing {
+		if left := a.lyricBrowseUntil.Sub(c.Now()); left > 0 {
+			c.After(left)
+		} else {
+			a.lyricBrowseUntil, a.lyricAt = time.Time{}, -2
+		}
 	}
 	return lag
-}
-
-// lyricsFollowButton floats at the foot of the lyrics while the listener
-// reads them on their own, its arrow pointing up or down to the line sung:
-// a click brings it back, and the lyrics follow it again.
-func lyricsFollowButton(c *ui.Context, up bool) ui.Element {
-	in := &ui.Motion{Y: 10, Scale: 0.96}
-	label := "回到下方的当前歌词"
-	if up {
-		label = "回到上方的当前歌词"
-	}
-	var b ui.Element
-	ui.Row(c).Absolute().Left(0).Right(8).Bottom(24).Justify(ui.Center).PassThrough().
-		Transition(ui.ElementTransition{Animation: &ui.Snappy, Enter: in, Exit: in}).Children(func() {
-		// A capsule of frosted light glass: it reads over any line under
-		// it, which still shows through.
-		b = ui.ButtonBase(c).Height(40).PaddingX(20).Gap(8).Radius(999).AlignItems(ui.Center).FocusRing(false).
-			Label(label).Tooltip(label).TextColor(white).
-			Material(glass.Blur{Radius: 20}).Border(1, white.Alpha(0.28)).Shadow(0, 8, 24, -6, radixBlack(7))
-		bg := white.Alpha(0.22)
-		if b.Hovered() || b.FocusVisible() {
-			bg = white.Alpha(0.3)
-		}
-		pose := ui.Pose{}
-		if b.Pressed() {
-			bg, pose.Scale = white.Alpha(0.36), 0.96
-		}
-		// The material takes the background's place: the light goes over it.
-		fill := b.AnimateColor("bg", bg, ui.Animation{Duration: 140 * time.Millisecond})
-		b.Draw(func(p *ui.Painter, r ui.Rect) { p.Fill(r, fill, r.H/2) }).AnimatePose(pose, ui.Snappy)
-		b.Children(func() {
-			// The arrow turns over as the line sung passes where the
-			// listener reads.
-			turn := float32(0)
-			if up {
-				turn = 180
-			}
-			ui.Box(c.Key("arrow")).Size(16, 16).AnimatePose(ui.Pose{Rotate: turn}, ui.Snappy).Children(func() {
-				ui.Icon(c, iconArrowDown).Size(16, 16)
-			})
-			ui.Text(c, "回到当前").FontSize(15).FontWeight(700).SingleLine()
-		})
-	})
-	return b
 }
 
 // queuePane lists the whole queue in play order, the track playing marked
