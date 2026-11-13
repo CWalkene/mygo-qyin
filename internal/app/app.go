@@ -231,7 +231,7 @@ func (a *app) redraw() {
 			invalidateWindow(d.coverWin)
 		}
 	}
-	if d := a.taskbarLyrics; d != nil && d.controls != nil && d.controlsOpen {
+	if d := a.taskbarLyrics; d != nil && d.controls != nil && (d.controlsOpen || d.controlsClosing) {
 		invalidateWindow(d.controls)
 	}
 }

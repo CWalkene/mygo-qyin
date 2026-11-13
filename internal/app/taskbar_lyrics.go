@@ -3,6 +3,7 @@ package app
 import (
 	"log"
 	"runtime"
+	"time"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
@@ -16,7 +17,16 @@ type taskbarLyrics struct {
 	win               *mygo.Window
 	coverWin          *mygo.Window
 	controls          *mygo.Window
+	controlsReady     bool
 	controlsOpen      bool
+	controlsEntering  bool
+	controlsClosing   bool
+	controlsBounds    mygo.Rectangle
+	controlsFrame     mygo.Rectangle
+	coverHovered      bool
+	coverEntered      time.Time
+	controlsHovered   bool
+	controlsLeft      time.Time
 	coverReady        bool
 	scrub             scrubState
 	stop              func()
@@ -155,6 +165,8 @@ func (d *taskbarLyrics) reportError(err error) {
 
 func (d *taskbarLyrics) hide() {
 	d.visible = false
+	d.coverHovered = false
+	d.coverEntered = time.Time{}
 	d.closeControls()
 	if d.coverWin != nil && !d.coverWin.IsDestroyed() {
 		d.coverWin.Hide()

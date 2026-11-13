@@ -76,7 +76,7 @@ func (d *taskbarLyrics) view(c *ui.Context) {
 func (d *taskbarLyrics) cover(c *ui.Context, url string, size, height float32) {
 	cover := ui.ButtonBase(c.Key("taskbar-cover")).Absolute().Left(taskbarLyricsCoverInset).Top((height-size)/2).
 		Size(size, size).Radius(min(6, size/2)).Background(radixGray(d.dark, 3)).Center().
-		Label("歌曲控制").Cursor(ui.CursorPointer).OnClick(d.toggleControls)
+		Label("打开主窗口").Cursor(ui.CursorPointer).OnClick(d.openMainWindow)
 	d.coverButton(c, cover, url, size)
 }
 
@@ -89,14 +89,15 @@ func (d *taskbarLyrics) coverView(c *ui.Context) {
 	w, h := c.Size()
 	size := min(w, h)
 	cover := ui.ButtonBase(c.Key("taskbar-cover")).Fill().Radius(min(6, size/2)).
-		Background(radixGray(d.dark, 3)).Center().Label("歌曲控制").
-		Cursor(ui.CursorPointer).OnClick(d.toggleControls)
+		Background(radixGray(d.dark, 3)).Center().Label("打开主窗口").
+		Cursor(ui.CursorPointer).OnClick(d.openMainWindow)
 	d.coverButton(c, cover, tr.Album.PicURL, size)
 }
 
 var taskbarControlsIcon = strokeIcon(`<rect x="3" y="4" width="18" height="16" rx="3"/><path d="M3 9h18M8 13h7M8 16h3"/><circle cx="16.5" cy="16" r="1.5"/>`)
 
 func (d *taskbarLyrics) coverButton(c *ui.Context, cover ui.Element, url string, size float32) {
+	d.hoverControls(c, cover.Hovered(), false)
 	active := float32(0)
 	if cover.Hovered() || cover.FocusVisible() || d.controlsOpen {
 		active = 1

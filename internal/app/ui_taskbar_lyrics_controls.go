@@ -28,12 +28,13 @@ func (d *taskbarLyrics) controlsView(c *ui.Context) {
 	if material {
 		background = ui.Transparent
 	}
-	c.Root().Background(background)
-	c.OnShortcut(0, ui.KeyEscape, d.closeControls)
+	c.Root().Background(ui.Transparent).Clip()
+	c.OnShortcut(0, ui.KeyEscape, d.dismissControls)
 	tr := d.a.pl.Current()
-	if !d.controlsOpen || tr == nil {
+	if (!d.controlsOpen && !d.controlsClosing) || tr == nil {
 		return
 	}
+	shown := d.animateControls(c)
 	identity := taskbarControlsTrack{id: tr.ID, mid: tr.MID}
 	previous := ui.Local(c.Root(), "taskbar-controls-track", func() taskbarControlsTrack { return identity })
 	if *previous != identity {
@@ -43,9 +44,15 @@ func (d *taskbarLyrics) controlsView(c *ui.Context) {
 	a, pl := d.a, d.a.pl
 	p := paletteFor(&theme)
 	a.tickTimes(c)
-	ui.Column(c.Key(identity)).Fill().Padding(12).Gap(8).TextColor(text).Children(func() {
+	panel := ui.Column(c.Key(identity)).Absolute().Top(0).Left(0).Right(0).Height(taskbarControlsHeight).
+		Padding(12).Gap(8).TextColor(text).Background(background).Disabled(!d.controlsOpen)
+	if d.controls == nil {
+		panel.Translate(0, float32(taskbarControlsHeight)*(1-shown))
+	}
+	panel.Children(func() {
 		ui.Row(c).Height(64).Gap(12).AlignItems(ui.Center).Children(func() {
-			cover := ui.Box(c.Key("artwork")).Size(64, 64).Shrink(0).Radius(7).Background(radixGray(dark, 4)).Center()
+			cover := ui.ButtonBase(c.Key("artwork")).Size(64, 64).Shrink(0).Radius(7).Background(radixGray(dark, 4)).Center().
+				Label("打开歌曲详情").Cursor(ui.CursorPointer).OnClick(d.openSongDetails)
 			bmp := bitmap(a.art.get(qqmusic.Sized(tr.Album.PicURL, 120), artCover))
 			cover.Children(func() {
 				if bmp != nil {
@@ -80,4 +87,5 @@ func (d *taskbarLyrics) controlsView(c *ui.Context) {
 			})
 		})
 	})
+	d.hoverControls(c, panel.Hovered(), true)
 }

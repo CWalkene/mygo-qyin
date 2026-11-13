@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/audio"
 	"github.com/egoist/mygo/ui"
 	"lilt/internal/qqmusic"
@@ -34,8 +35,8 @@ func taskbarControlsFixture() (*app, *taskbarLyrics) {
 	return a, d
 }
 
-// Clicking either cover surface toggles song controls, and Escape dismisses them without opening the main player.
-func TestTaskbarLyricsControlsCoverToggle(t *testing.T) {
+// 连续悬停封面 0.25 秒后展开面板，短暂划过不展开，移出后延迟关闭。
+func TestTaskbarLyricsControlsCoverHover(t *testing.T) {
 	for _, surface := range []string{"lyrics-host", "cover-island"} {
 		t.Run(surface, func(t *testing.T) {
 			a, d := taskbarControlsFixture()
@@ -44,30 +45,162 @@ func TestTaskbarLyricsControlsCoverToggle(t *testing.T) {
 				view, width, height = d.coverView, 34, 34
 			}
 			tt := ui.NewTester(view, width, height)
+			tt.Move(-10, -10)
 			tt.Frame()
-			if err := tt.Click("歌曲控制"); err != nil {
-				t.Fatal(err)
+			cover, ok := tt.Find("打开主窗口")
+			if !ok {
+				t.Fatal("cannot target taskbar cover")
 			}
+			tt.Move(cover.X+cover.W/2, cover.Y+cover.H/2)
+			tt.Frame()
+			tt.Advance(200 * time.Millisecond)
+			tt.Move(-10, -10)
+			tt.Frame()
+			tt.Advance(500 * time.Millisecond)
+			if d.controlsOpen {
+				t.Fatal("短暂划过封面后展开了面板")
+			}
+			tt.Move(cover.X+cover.W/2, cover.Y+cover.H/2)
+			tt.Frame()
+			tt.Advance(249 * time.Millisecond)
+			if d.controlsOpen {
+				t.Fatal("连续悬停不足 0.25 秒就展开了面板")
+			}
+			tt.Advance(time.Millisecond)
 			if !d.controlsOpen {
-				t.Fatal("clicking the cover did not open song controls")
+				t.Fatal("hovering the cover did not open song controls")
 			}
-			d.scrub = scrubState{v: 120, held: true, active: true}
-			if err := tt.Click("歌曲控制"); err != nil {
+			if err := tt.Click("打开主窗口"); err != nil {
 				t.Fatal(err)
 			}
-			if d.controlsOpen || d.scrub.held || d.scrub.active {
-				t.Fatal("clicking the cover again kept controls or an unfinished seek open")
+			if d.controlsOpen || a.nowPlaying {
+				t.Fatal("点击封面未收起面板，或意外切换到了歌曲详情")
 			}
-			if err := tt.Click("歌曲控制"); err != nil {
-				t.Fatal(err)
+			tt.Move(-10, -10)
+			tt.Frame()
+			tt.Move(cover.X+cover.W/2, cover.Y+cover.H/2)
+			tt.Frame()
+			tt.Advance(taskbarControlsHover)
+			if !d.controlsOpen {
+				t.Fatal("hovering the cover again did not reopen song controls")
+			}
+			tt.Move(-10, -10)
+			tt.Frame()
+			tt.Advance(150 * time.Millisecond)
+			if !d.controlsOpen {
+				t.Fatal("controls closed before the pointer could cross the gap")
 			}
 			panel := ui.NewTester(d.controlsView, taskbarControlsWidth, taskbarControlsHeight)
+			panel.Move(100, 40)
+			panel.Frame()
+			panel.Advance(taskbarControlsMotion)
+			tt.Advance(350 * time.Millisecond)
+			if !d.controlsOpen {
+				t.Fatal("controls closed while hovering the panel")
+			}
+			panel.Move(-10, -10)
+			panel.Frame()
+			panel.Advance(350 * time.Millisecond)
+			if d.controlsOpen {
+				t.Fatal("controls stayed open after leaving both surfaces")
+			}
+			tt.Move(cover.X+cover.W/2, cover.Y+cover.H/2)
+			tt.Frame()
+			tt.Advance(500 * time.Millisecond)
 			panel.Frame()
 			panel.Key(0, ui.KeyEscape)
 			if d.controlsOpen || a.nowPlaying || a.pl.Playing() || a.pl.Position() != 40*time.Second {
 				t.Fatal("Escape did not dismiss locally or cover interaction changed playback")
 			}
 		})
+	}
+}
+
+func TestTaskbarLyricsControlsMotion(t *testing.T) {
+	if dir := os.Getenv("NM_FRAMES"); dir != "" {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, reduced := range []bool{false, true} {
+		t.Run(map[bool]string{false: "animated", true: "reduced-motion"}[reduced], func(t *testing.T) {
+			_, d := taskbarControlsFixture()
+			d.coverHovered = true
+			d.openControls()
+			tt := ui.NewTesterWith(d.controlsView, taskbarControlsWidth, taskbarControlsHeight,
+				ui.TesterOptions{Preferences: ui.Preferences{ReduceMotion: reduced}})
+			top := func() int {
+				img := tt.Image()
+				for y := 0; y < img.Bounds().Dy(); y++ {
+					_, _, _, alpha := img.At(taskbarControlsWidth/2, y).RGBA()
+					if alpha > 0 {
+						return y
+					}
+				}
+				return taskbarControlsHeight
+			}
+			if !reduced {
+				if y := top(); y != taskbarControlsHeight {
+					t.Fatalf("展开前面板已可见：top=%d", y)
+				}
+				tt.Advance(taskbarControlsMotion / 2)
+				saveTransitionFrame(t, tt, "taskbar-controls-opening")
+				if y := top(); y <= 0 || y >= taskbarControlsHeight {
+					t.Fatalf("展开中间帧没有从下方向上进入：top=%d", y)
+				}
+			}
+			tt.Advance(taskbarControlsMotion)
+			tt.Frame()
+			if y := top(); y != 0 {
+				t.Fatalf("展开完成后面板未完整显示：top=%d", y)
+			}
+			d.dismissControls()
+			if !reduced {
+				saveTransitionFrame(t, tt, "taskbar-controls-expanded")
+			}
+			tt.Frame()
+			if !reduced {
+				tt.Advance(taskbarControlsMotion / 2)
+				saveTransitionFrame(t, tt, "taskbar-controls-closing")
+				if y := top(); y <= 0 || y >= taskbarControlsHeight || !d.controlsClosing {
+					t.Fatalf("收起中间帧没有向下退出：top=%d closing=%t", y, d.controlsClosing)
+				}
+				d.openControls()
+				tt.Frame()
+				tt.Advance(taskbarControlsMotion)
+				tt.Frame()
+				if !d.controlsOpen || d.controlsClosing || top() != 0 {
+					t.Fatal("收起过程中重新展开未恢复面板")
+				}
+				d.dismissControls()
+				tt.Frame()
+			}
+			tt.Advance(taskbarControlsMotion)
+			tt.Frame()
+			if d.controlsOpen || d.controlsClosing || top() != taskbarControlsHeight {
+				t.Fatalf("收起动画完成后仍保留面板：open=%t closing=%t top=%d", d.controlsOpen, d.controlsClosing, top())
+			}
+		})
+	}
+	bounds := mygo.Rectangle{X: 20, Y: 600, Width: taskbarControlsWidth, Height: taskbarControlsHeight}
+	for _, shown := range []float32{0, 0.5, 1} {
+		frame := taskbarControlsFrame(bounds, shown)
+		if frame.Y+frame.Height != bounds.Y+bounds.Height || frame.X != bounds.X || frame.Width != bounds.Width {
+			t.Fatalf("原生面板动画未固定底边：shown=%f frame=%+v", shown, frame)
+		}
+	}
+}
+
+func TestTaskbarLyricsControlsOpenSongDetails(t *testing.T) {
+	a, d := taskbarControlsFixture()
+	d.controlsOpen = true
+	tt := ui.NewTester(d.controlsView, taskbarControlsWidth, taskbarControlsHeight)
+	tt.Frame()
+	if err := tt.Click("打开歌曲详情"); err != nil {
+		t.Fatal(err)
+	}
+	if !a.nowPlaying || d.controlsOpen || a.pl.Current().ID != 7 || a.pl.Position() != 40*time.Second {
+		t.Fatal("artwork did not open song details and dismiss controls while preserving playback")
 	}
 }
 
