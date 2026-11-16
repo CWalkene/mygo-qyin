@@ -238,12 +238,7 @@ func (a *app) volumeButton(c *ui.Context, color ui.Color) {
 		panel.AttachTo(b, ui.AnchorTop, ui.AnchorBottom).Margin(0, 0, arrow+3, 0).Width(52).Padding(11, 0, 12, 0).
 			Radius(12).Material(material).Border(0.5, pop.edge).Shadow(0, 8, 24, -4, radixInk.Alpha(0.2)).
 			AlignItems(ui.Center).Gap(8).Label("音量").
-			Transition(ui.ElementTransition{
-				Duration: 180 * time.Millisecond, Ease: ui.EaseOut,
-				ExitDuration: 140 * time.Millisecond, ExitEase: ui.EaseIn,
-				Enter: &ui.Motion{Y: 4},
-				Exit:  &ui.Motion{Y: 3},
-			})
+			Transition(popoverTransition())
 		// 透明区域衔接按钮与浮层，鼠标经过间隙时保持展开。
 		ui.Box(c.Key("volume-bridge")).Absolute().Left(0).Right(0).Bottom(-arrow - 3).Height(arrow + 3)
 		panel.Draw(func(p *ui.Painter, r ui.Rect) {
@@ -293,6 +288,15 @@ func (a *app) volumeButton(c *ui.Context, color ui.Color) {
 // popover holds the colors of a popover as AppKit draws them.
 type popover struct {
 	fill, edge, track, knob ui.Color
+}
+
+func popoverTransition() ui.ElementTransition {
+	return ui.ElementTransition{
+		Duration: 180 * time.Millisecond, Ease: ui.EaseOut,
+		ExitDuration: 140 * time.Millisecond, ExitEase: ui.EaseIn,
+		Enter: &ui.Motion{Y: 4},
+		Exit:  &ui.Motion{Y: 3},
+	}
 }
 
 func popoverColors(dark bool) popover {
