@@ -28,6 +28,8 @@ type taskbarLyrics struct {
 	controlsHovered   bool
 	controlsLeft      time.Time
 	coverReady        bool
+	coverMainFocused  bool
+	coverFocusSet     bool
 	scrub             scrubState
 	stop              func()
 	placement         taskbarLyricsPlacement

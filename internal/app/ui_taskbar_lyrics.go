@@ -76,7 +76,7 @@ func (d *taskbarLyrics) view(c *ui.Context) {
 func (d *taskbarLyrics) cover(c *ui.Context, url string, size, height float32) {
 	cover := ui.ButtonBase(c.Key("taskbar-cover")).Absolute().Left(taskbarLyricsCoverInset).Top((height-size)/2).
 		Size(size, size).Radius(min(6, size/2)).Background(radixGray(d.dark, 3)).Center().
-		Label("打开主窗口").Cursor(ui.CursorPointer).OnClick(d.openMainWindow)
+		Label("打开主窗口").Cursor(ui.CursorPointer).OnClick(d.toggleMainWindow)
 	d.coverButton(c, cover, url, size)
 }
 
@@ -90,7 +90,7 @@ func (d *taskbarLyrics) coverView(c *ui.Context) {
 	size := min(w, h)
 	cover := ui.ButtonBase(c.Key("taskbar-cover")).Fill().Radius(min(6, size/2)).
 		Background(radixGray(d.dark, 3)).Center().Label("打开主窗口").
-		Cursor(ui.CursorPointer).OnClick(d.openMainWindow)
+		Cursor(ui.CursorPointer).OnClick(d.toggleMainWindow)
 	d.coverButton(c, cover, tr.Album.PicURL, size)
 }
 

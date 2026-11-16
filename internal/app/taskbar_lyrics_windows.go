@@ -18,9 +18,46 @@ var taskbarOleaut32 = syscall.NewLazyDLL("oleaut32.dll")
 var taskbarComctl32 = syscall.NewLazyDLL("comctl32.dll")
 
 var taskbarContextMenuProc uintptr
+var taskbarCoverInputProc uintptr
+var taskbarCoverInputs = map[uintptr]*taskbarLyrics{}
 
 func init() {
 	taskbarContextMenuProc = syscall.NewCallback(taskbarContextMenuMessage)
+	taskbarCoverInputProc = syscall.NewCallback(taskbarCoverInputMessage)
+}
+
+func taskbarCoverInputMessage(hwnd, message, wp, lp, id, data uintptr) uintptr {
+	if d := taskbarCoverInputs[hwnd]; d != nil {
+		switch message {
+		case 0x0021: // WM_MOUSEACTIVATE
+			// The Explorer parent must not activate before the press is captured.
+			return 3 // MA_NOACTIVATE
+		case 0x0201, 0x0203: // WM_LBUTTONDOWN / WM_LBUTTONDBLCLK
+			// MyGo calls SetFocus on its surface before delivering PointerDown.
+			d.coverMainFocused = d.a.win != nil && d.a.win.IsFocused()
+			d.coverFocusSet = true
+		case 0x0100: // WM_KEYDOWN
+			d.coverFocusSet = false
+		case 0x0082: // WM_NCDESTROY
+			delete(taskbarCoverInputs, hwnd)
+			taskbarComctl32.NewProc("RemoveWindowSubclass").Call(hwnd, taskbarCoverInputProc, id)
+		}
+	}
+	r, _, _ := taskbarComctl32.NewProc("DefSubclassProc").Call(hwnd, message, wp, lp)
+	return r
+}
+
+func guardTaskbarLyricsCoverInput(d *taskbarLyrics) error {
+	hwnd := taskbarFindChild(d.coverWin.NativeHandle(), "MyGoSurface")
+	if hwnd == 0 {
+		return fmt.Errorf("cover input surface missing")
+	}
+	ok, _, err := taskbarComctl32.NewProc("SetWindowSubclass").Call(hwnd, taskbarCoverInputProc, 1, 0)
+	if ok == 0 {
+		return fmt.Errorf("guard taskbar cover input: %w", err)
+	}
+	taskbarCoverInputs[hwnd] = d
+	return nil
 }
 
 func taskbarContextMenuMessage(hwnd, message, wp, lp, id, data uintptr) uintptr {

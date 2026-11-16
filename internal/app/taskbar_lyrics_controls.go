@@ -58,6 +58,11 @@ func (d *taskbarLyrics) syncCoverWindow() {
 		d.coverWin, d.coverReady = w, false
 		w.SetIgnoreMouseEvents(false)
 		styleDesktopLyricsWindow(w)
+		if err := guardTaskbarLyricsCoverInput(d); err != nil {
+			d.reportError(err)
+			d.destroyCoverWindow()
+			return
+		}
 		if err := placeTaskbarLyricsCover(w, d.placement); err != nil {
 			d.reportError(err)
 			d.destroyCoverWindow()
@@ -91,6 +96,7 @@ func (d *taskbarLyrics) syncCoverWindow() {
 func (d *taskbarLyrics) destroyCoverWindow() {
 	d.coverHovered = false
 	d.coverEntered = time.Time{}
+	d.coverFocusSet = false
 	d.closeControls()
 	w := d.coverWin
 	d.coverWin, d.coverReady = nil, false
@@ -333,10 +339,22 @@ func (d *taskbarLyrics) openSongDetails() {
 	d.a.redraw()
 }
 
-func (d *taskbarLyrics) openMainWindow() {
+func (d *taskbarLyrics) toggleMainWindow() {
+	focused := d.coverMainFocused
+	captured := d.coverFocusSet
+	d.coverFocusSet = false
 	if d.a.quitting {
 		return
 	}
 	d.dismissControls()
+	if w := d.a.win; w != nil {
+		if !captured {
+			focused = w.IsFocused()
+		}
+		if focused {
+			w.Minimize()
+			return
+		}
+	}
 	d.a.showMain()
 }
