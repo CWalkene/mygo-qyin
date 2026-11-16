@@ -264,9 +264,9 @@ type WindowStateStore interface {
 	// an error) windows get their options.
 	LoadWindowStates() (map[string]WindowState, error)
 	// SaveWindowStates replaces the saved states with states, which the
-	// store may keep. It is called when a window with a StateKey closes
-	// and when the app quits, if a state changed. After an error the
-	// next call saves the states again.
+	// store may keep. It is called when a window with a StateKey hides,
+	// minimizes or closes, and when the app quits, if a state changed.
+	// After an error the next call saves the states again.
 	SaveWindowStates(states map[string]WindowState) error
 }
 
@@ -917,7 +917,7 @@ func (w *Window) Destroy() { onMain(w.destroy) }
 
 func (w *Window) destroy() {
 	if n := w.native; n != nil {
-		w.closeState()
+		w.saveState()
 		n.Close()
 		// Backends report Closed synchronously, but be defensive.
 		(&windowHandler{w}).Closed()
@@ -982,6 +982,9 @@ func (w *Window) Hide() {
 		w.showLater = false
 		if w.native == nil || !w.native.IsVisible() {
 			return
+		}
+		if w.stateKey != "" {
+			w.saveState()
 		}
 		w.native.Hide()
 		fire(&w.onHide)
@@ -1987,7 +1990,7 @@ func (h *windowHandler) ShouldClose() bool {
 	e := &CloseEvent{Window: h.w}
 	fire1(&h.w.onClose, e)
 	if !e.prevented {
-		h.w.closeState()
+		h.w.saveState()
 	}
 	return !e.prevented
 }
@@ -2070,9 +2073,14 @@ func (h *windowHandler) MenuItemClicked(id int) {
 	}
 }
 
-func (h *windowHandler) Resized()           { h.w.stateChanged(); h.w.placeFlyouts(); fire(&h.w.onResize) }
-func (h *windowHandler) Moved()             { h.w.stateChanged(); h.w.placeFlyouts(); fire(&h.w.onMove) }
-func (h *windowHandler) Minimized()         { h.w.stateChanged(); fire(&h.w.onMinimize) }
+func (h *windowHandler) Resized() { h.w.stateChanged(); h.w.placeFlyouts(); fire(&h.w.onResize) }
+func (h *windowHandler) Moved()   { h.w.stateChanged(); h.w.placeFlyouts(); fire(&h.w.onMove) }
+func (h *windowHandler) Minimized() {
+	if h.w.stateKey != "" {
+		h.w.saveState()
+	}
+	fire(&h.w.onMinimize)
+}
 func (h *windowHandler) Restored()          { h.w.stateChanged(); fire(&h.w.onRestore) }
 func (h *windowHandler) Maximized()         { h.w.stateChanged(); fire(&h.w.onMaximize) }
 func (h *windowHandler) Unmaximized()       { h.w.stateChanged(); fire(&h.w.onUnmaximize) }

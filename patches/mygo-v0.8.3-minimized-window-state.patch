@@ -1,0 +1,298 @@
+diff --git a/window.go b/window.go
+index 307ca79..c609b23 100644
+--- a/window.go
++++ b/window.go
+@@ -264,9 +264,9 @@ type WindowStateStore interface {
+ 	// an error) windows get their options.
+ 	LoadWindowStates() (map[string]WindowState, error)
+ 	// SaveWindowStates replaces the saved states with states, which the
+-	// store may keep. It is called when a window with a StateKey closes
+-	// and when the app quits, if a state changed. After an error the
+-	// next call saves the states again.
++	// store may keep. It is called when a window with a StateKey hides,
++	// minimizes or closes, and when the app quits, if a state changed.
++	// After an error the next call saves the states again.
+ 	SaveWindowStates(states map[string]WindowState) error
+ }
+ 
+@@ -917,7 +917,7 @@ func (w *Window) Destroy() { onMain(w.destroy) }
+ 
+ func (w *Window) destroy() {
+ 	if n := w.native; n != nil {
+-		w.closeState()
++		w.saveState()
+ 		n.Close()
+ 		// Backends report Closed synchronously, but be defensive.
+ 		(&windowHandler{w}).Closed()
+@@ -983,6 +983,9 @@ func (w *Window) Hide() {
+ 		if w.native == nil || !w.native.IsVisible() {
+ 			return
+ 		}
++		if w.stateKey != "" {
++			w.saveState()
++		}
+ 		w.native.Hide()
+ 		fire(&w.onHide)
+ 	})
+@@ -1987,7 +1990,7 @@ func (h *windowHandler) ShouldClose() bool {
+ 	e := &CloseEvent{Window: h.w}
+ 	fire1(&h.w.onClose, e)
+ 	if !e.prevented {
+-		h.w.closeState()
++		h.w.saveState()
+ 	}
+ 	return !e.prevented
+ }
+@@ -2070,9 +2073,14 @@ func (h *windowHandler) MenuItemClicked(id int) {
+ 	}
+ }
+ 
+-func (h *windowHandler) Resized()           { h.w.stateChanged(); h.w.placeFlyouts(); fire(&h.w.onResize) }
+-func (h *windowHandler) Moved()             { h.w.stateChanged(); h.w.placeFlyouts(); fire(&h.w.onMove) }
+-func (h *windowHandler) Minimized()         { h.w.stateChanged(); fire(&h.w.onMinimize) }
++func (h *windowHandler) Resized() { h.w.stateChanged(); h.w.placeFlyouts(); fire(&h.w.onResize) }
++func (h *windowHandler) Moved()   { h.w.stateChanged(); h.w.placeFlyouts(); fire(&h.w.onMove) }
++func (h *windowHandler) Minimized() {
++	if h.w.stateKey != "" {
++		h.w.saveState()
++	}
++	fire(&h.w.onMinimize)
++}
+ func (h *windowHandler) Restored()          { h.w.stateChanged(); fire(&h.w.onRestore) }
+ func (h *windowHandler) Maximized()         { h.w.stateChanged(); fire(&h.w.onMaximize) }
+ func (h *windowHandler) Unmaximized()       { h.w.stateChanged(); fire(&h.w.onUnmaximize) }
+diff --git a/window_state.go b/window_state.go
+index 94880c7..6dab743 100644
+--- a/window_state.go
++++ b/window_state.go
+@@ -19,7 +19,7 @@ import (
+ // app set its own. It is captured shortly after the window moves, resizes
+ // or changes state, when it settled (maximizing and full screen
+ // transitions resize the window on the way), and when it closes; it is
+-// saved when a window closes and when the app quits.
++// saved when a window hides, minimizes or closes, and when the app quits.
+ 
+ const windowStateFile = "window-state.json"
+ 
+@@ -200,6 +200,15 @@ func (w *Window) stateChanged() {
+ 	if w.stateKey == "" {
+ 		return
+ 	}
++	// Keep the mode even if the window is minimized before the bounds settle.
++	if st, ok := windowStates.byKey[w.stateKey]; ok && w.native != nil && !w.native.IsMinimized() {
++		maximized, fullScreen := w.native.IsMaximized(), w.native.IsFullScreen()
++		if st.Maximized != maximized || st.FullScreen != fullScreen {
++			st.Maximized, st.FullScreen = maximized, fullScreen
++			windowStates.byKey[w.stateKey] = st
++			windowStates.dirty = true
++		}
++	}
+ 	if w.stateTimer != nil {
+ 		w.stateTimer.Reset(windowStateDelay)
+ 		return
+@@ -228,8 +237,12 @@ func (w *Window) captureState() {
+ // full screen or minimized window keeps st's normal bounds, and so does
+ // one whose bounds or pixels the system does not give.
+ func captureWindowState(st WindowState, n platform.Window) WindowState {
++	// A minimized window may no longer report its previous maximized state.
++	if n.IsMinimized() {
++		return st
++	}
+ 	st.Maximized, st.FullScreen = n.IsMaximized(), n.IsFullScreen()
+-	if st.Maximized || st.FullScreen || n.IsMinimized() {
++	if st.Maximized || st.FullScreen {
+ 		return st
+ 	}
+ 	b := n.Bounds()
+@@ -247,9 +260,9 @@ func captureWindowState(st WindowState, n platform.Window) WindowState {
+ 	return st
+ }
+ 
+-// closeState captures the state of a closing window for the last time,
+-// and writes the states.
+-func (w *Window) closeState() {
++// saveState captures the current state and writes it without waiting for
++// the pending state timer.
++func (w *Window) saveState() {
+ 	if w.stateTimer != nil {
+ 		w.stateTimer.Stop()
+ 		w.stateTimer = nil
+diff --git a/window_state_js.go b/window_state_js.go
+index 951f71d..b9ccb49 100644
+--- a/window_state_js.go
++++ b/window_state_js.go
+@@ -17,4 +17,4 @@ func (w *Window) initState(p *platform.WindowOptions) {}
+ 
+ func (w *Window) stateChanged() {}
+ 
+-func (w *Window) closeState() {}
++func (w *Window) saveState() {}
+diff --git a/window_state_capture_test.go b/window_state_capture_test.go
+new file mode 100644
+index 0000000..9e51c80
+--- /dev/null
++++ b/window_state_capture_test.go
+@@ -0,0 +1,163 @@
++//go:build !js
++
++package mygo
++
++import (
++	"errors"
++	"testing"
++
++	"github.com/egoist/mygo/internal/platform"
++)
++
++type stateCaptureWindow struct {
++	platform.Window
++	minimized, maximized, fullScreen bool
++	bounds                           platform.Rect
++}
++
++type stateCaptureStore struct {
++	states map[string]WindowState
++	saves  int
++	err    error
++}
++
++func (s *stateCaptureStore) LoadWindowStates() (map[string]WindowState, error) {
++	return s.states, nil
++}
++
++func (s *stateCaptureStore) SaveWindowStates(states map[string]WindowState) error {
++	s.saves++
++	if s.err != nil {
++		return s.err
++	}
++	s.states = states
++	return nil
++}
++
++func TestWindowStateSavesOnMinimize(t *testing.T) {
++	previousStates, previousStore := windowStates, App.stateStore
++	t.Cleanup(func() { windowStates, App.stateStore = previousStates, previousStore })
++	previous := WindowState{
++		X: 417, Width: 880, Height: 580, Maximized: true,
++		PixelX: 626, PixelWidth: 1320, PixelHeight: 870,
++	}
++	store := &stateCaptureStore{}
++	App.stateStore = store
++	windowStates.loaded = true
++	windowStates.byKey = map[string]WindowState{"main": previous}
++	windowStates.dirty = true
++	w := &Window{stateKey: "main", native: stateCaptureWindow{minimized: true}}
++	h := &windowHandler{w}
++	notified := false
++	w.OnMinimize(func() {
++		if store.saves != 1 || store.states["main"] != previous {
++			t.Fatal("minimize listener ran before the restorable state was saved")
++		}
++		notified = true
++	})
++	h.Minimized()
++	if !notified || windowStates.dirty {
++		t.Fatal("minimized state was not saved")
++	}
++	h.Minimized()
++	if store.saves != 1 {
++		t.Fatalf("unchanged state was saved %d times", store.saves)
++	}
++}
++
++func TestWindowStateMinimizeBeforeBoundsSettle(t *testing.T) {
++	previousStates, previousStore := windowStates, App.stateStore
++	t.Cleanup(func() { windowStates, App.stateStore = previousStates, previousStore })
++	for _, maximized := range []bool{true, false} {
++		store := &stateCaptureStore{}
++		App.stateStore = store
++		windowStates.loaded = true
++		windowStates.byKey = map[string]WindowState{
++			"main": {Width: 1180, Height: 780, Maximized: !maximized},
++		}
++		windowStates.dirty = false
++		n := &stateCaptureWindow{maximized: maximized}
++		w := &Window{stateKey: "main", native: n}
++		w.stateChanged()
++		n.minimized, n.maximized = true, false
++		(&windowHandler{w}).Minimized()
++		if store.saves != 1 || store.states["main"].Maximized != maximized {
++			t.Fatalf("maximized=%v: saved=%+v, writes=%d", maximized, store.states["main"], store.saves)
++		}
++		if w.stateTimer != nil {
++			t.Fatal("pending capture was not stopped by minimize")
++		}
++	}
++}
++
++func TestWindowStateSaveFailureRetries(t *testing.T) {
++	previousStates, previousStore := windowStates, App.stateStore
++	t.Cleanup(func() { windowStates, App.stateStore = previousStates, previousStore })
++	store := &stateCaptureStore{err: errors.New("save failed")}
++	App.stateStore = store
++	windowStates.loaded = true
++	windowStates.byKey = map[string]WindowState{}
++	windowStates.dirty = false
++	w := &Window{
++		stateKey: "main",
++		native: stateCaptureWindow{
++			bounds: platform.Rect{X: 263, Y: 119, Width: 1180, Height: 780},
++		},
++	}
++	w.saveState()
++	if !windowStates.dirty || store.saves != 1 {
++		t.Fatal("failed save was not retained for retry")
++	}
++	store.err = nil
++	w.saveState()
++	if windowStates.dirty || store.saves != 2 || store.states["main"].Width != 1180 {
++		t.Fatal("state was not saved on retry")
++	}
++}
++
++func (w stateCaptureWindow) IsMinimized() bool  { return w.minimized }
++func (w stateCaptureWindow) IsMaximized() bool  { return w.maximized }
++func (w stateCaptureWindow) IsFullScreen() bool { return w.fullScreen }
++func (w stateCaptureWindow) Bounds() platform.Rect {
++	return w.bounds
++}
++
++func TestWindowStateMinimizedKeepsRestorableState(t *testing.T) {
++	for _, mode := range []string{"normal", "maximized", "fullscreen"} {
++		t.Run(mode, func(t *testing.T) {
++			previous := WindowState{
++				X: 417, Y: 20, Width: 880, Height: 580,
++				PixelX: 626, PixelY: 30, PixelWidth: 1320, PixelHeight: 870,
++				Maximized: mode == "maximized", FullScreen: mode == "fullscreen",
++			}
++			n := stateCaptureWindow{
++				minimized: true,
++				bounds:    platform.Rect{X: -32000, Y: -32000, Width: 237, Height: 39},
++			}
++			if got := captureWindowState(previous, n); got != previous {
++				t.Fatalf("minimized state = %+v; want %+v", got, previous)
++			}
++		})
++	}
++}
++
++func TestWindowStateCaptureAfterRestore(t *testing.T) {
++	previous := WindowState{X: 417, Width: 880, Height: 580, Maximized: true}
++	bounds := platform.Rect{X: 263, Y: 119, Width: 1180, Height: 780}
++	for _, mode := range []string{"normal", "maximized", "fullscreen"} {
++		t.Run(mode, func(t *testing.T) {
++			n := stateCaptureWindow{
++				maximized: mode == "maximized", fullScreen: mode == "fullscreen",
++				bounds: bounds,
++			}
++			want := previous
++			want.Maximized, want.FullScreen = n.maximized, n.fullScreen
++			if mode == "normal" {
++				want.X, want.Y, want.Width, want.Height = bounds.X, bounds.Y, bounds.Width, bounds.Height
++			}
++			if got := captureWindowState(previous, n); got != want {
++				t.Fatalf("restored state = %+v; want %+v", got, want)
++			}
++		})
++	}
++}

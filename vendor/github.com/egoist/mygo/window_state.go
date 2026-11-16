@@ -19,7 +19,7 @@ import (
 // app set its own. It is captured shortly after the window moves, resizes
 // or changes state, when it settled (maximizing and full screen
 // transitions resize the window on the way), and when it closes; it is
-// saved when a window closes and when the app quits.
+// saved when a window hides, minimizes or closes, and when the app quits.
 
 const windowStateFile = "window-state.json"
 
@@ -200,6 +200,15 @@ func (w *Window) stateChanged() {
 	if w.stateKey == "" {
 		return
 	}
+	// Keep the mode even if the window is minimized before the bounds settle.
+	if st, ok := windowStates.byKey[w.stateKey]; ok && w.native != nil && !w.native.IsMinimized() {
+		maximized, fullScreen := w.native.IsMaximized(), w.native.IsFullScreen()
+		if st.Maximized != maximized || st.FullScreen != fullScreen {
+			st.Maximized, st.FullScreen = maximized, fullScreen
+			windowStates.byKey[w.stateKey] = st
+			windowStates.dirty = true
+		}
+	}
 	if w.stateTimer != nil {
 		w.stateTimer.Reset(windowStateDelay)
 		return
@@ -228,8 +237,12 @@ func (w *Window) captureState() {
 // full screen or minimized window keeps st's normal bounds, and so does
 // one whose bounds or pixels the system does not give.
 func captureWindowState(st WindowState, n platform.Window) WindowState {
+	// A minimized window may no longer report its previous maximized state.
+	if n.IsMinimized() {
+		return st
+	}
 	st.Maximized, st.FullScreen = n.IsMaximized(), n.IsFullScreen()
-	if st.Maximized || st.FullScreen || n.IsMinimized() {
+	if st.Maximized || st.FullScreen {
 		return st
 	}
 	b := n.Bounds()
@@ -247,9 +260,9 @@ func captureWindowState(st WindowState, n platform.Window) WindowState {
 	return st
 }
 
-// closeState captures the state of a closing window for the last time,
-// and writes the states.
-func (w *Window) closeState() {
+// saveState captures the current state and writes it without waiting for
+// the pending state timer.
+func (w *Window) saveState() {
 	if w.stateTimer != nil {
 		w.stateTimer.Stop()
 		w.stateTimer = nil

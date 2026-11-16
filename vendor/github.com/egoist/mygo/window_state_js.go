@@ -17,4 +17,4 @@ func (w *Window) initState(p *platform.WindowOptions) {}
 
 func (w *Window) stateChanged() {}
 
-func (w *Window) closeState() {}
+func (w *Window) saveState() {}

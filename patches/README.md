@@ -10,6 +10,7 @@
 | `mygo-v0.8.3-linux-layer-drag.patch` | Wayland layer-shell 歌词面板通过更新锚点拖动；读取 xdg-output 逻辑边界，修复 KDE 分数缩放下无法拖到底边的问题，并通知位置保存。 |
 | `mygo-v0.8.3-macos-dev-icon.patch` | 开发包优先选择 `macos.icon` 的 `-dev` 兄弟文件，正确读取和缓存 ICNS，并监听文件或资产目录变化。 |
 | `mygo-v0.8.3-windows-state-compat.patch` | 将旧版本地补丁保存的 `windowsBounds` 读入上游 `pixel*` 字段；已有 `pixel*` 优先，下次保存使用上游格式。 |
+| `mygo-v0.8.3-minimized-window-state.patch` | 隐藏到托盘和最小化时保存窗口状态；最小化时保留此前的最大化、全屏及普通窗口位置尺寸，避免下次启动丢失最大化状态。 |
 | `mygo-v0.8.3-tester-label-target.patch` | Tester 点击同名目标时逐个验证实际命中，避免 RichText 父文本误挡内联链接；仍拒绝被遮挡的目标。 |
 | `mygo-v0.8.3-desktop-audio.patch` | 保留桌面原采样率输出、可选设备预热、自然尾音排空及停止后端重开、ALSA 转换回退、切频时隔离已暂停旧曲淡出并在旧输出平滑收尾、正常退出时遵循播放淡入淡出设置的终止性 Shutdown，以及 WSOLA 按输出率步进的修复与回归。 |
 | `mygo-v0.8.3-analytic-clip.patch` | 将可化简的静止几何裁剪直接交给 GPU，包含完整切除圆角的分数滚动边界及不透明冗余裁剪；重叠抗锯齿、变换及图片/渐变遮罩保留像素路径。 |
