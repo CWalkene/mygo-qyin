@@ -114,6 +114,9 @@ func (a *app) signedIn(prof *qqmusic.Profile) {
 	// the listener play their songs is back.
 	a.restoreSession()
 	a.syncSongFans()
+	if prof != nil && a.pl != nil && a.pl.Err() == qqmusic.ErrLoginRequired.Error() {
+		a.pl.ClearErr()
+	}
 	a.mine, a.saved, a.recPlaylists, a.liked = nil, nil, nil, nil
 	a.clearSongShelves()
 	a.likedPrograms, a.askedPrograms = nil, nil
