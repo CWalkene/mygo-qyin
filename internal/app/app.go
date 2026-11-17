@@ -110,8 +110,17 @@ type app struct {
 	homeGen     int
 
 	playlists       map[int64]*qqmusic.Playlist
+	playlistLRU     []int64
+	plSynced        map[int64]bool
+	plSyncedAt      map[int64]time.Time
+	plStale         map[int64]bool
+	refreshingPl    map[int64]bool
+	plGen           map[int64]int
+	plEpoch         int
+	playAfterPl     map[int64]bool
 	loadingPl       map[int64]bool
 	plErr           map[int64]string
+	postFn          func(func()) // test hook for main-thread callbacks without a window
 	artists         map[int64]*artistData
 	artistTab       int // what an artist's page lists: artistHot, artistLatest, artistAlbums or artistEvents
 	albums          map[int64]*albumData
@@ -120,6 +129,7 @@ type app struct {
 	podcastTab      *podcastTab // the podcasts tab's lists
 	purchased       [2]*purchasedData
 	purchasedScroll [2]listScrollState
+	purchasedEpoch  int
 	// Each page keeps its place when navigating or while Now Playing covers it.
 	pageStates map[route]*pageScrollState
 	navScroll  ui.ScrollState
@@ -148,6 +158,8 @@ type app struct {
 	lyricAt          int
 	lyricBrowseUntil time.Time
 	lyricPlaying     bool
+	lyricResume      bool // re-anchor following lyrics after the window restores its layout
+	lyricResumeAt    time.Time
 	lyricTrack       int64
 	lyricSize        float32   // size used for the preceding lyrics layout
 	lyricSizeAt      time.Time // frame in which the lyrics changed size
@@ -205,6 +217,10 @@ type app struct {
 // post runs fn on the main thread and redraws both windows. Without a
 // window, as in tests, it drops fn.
 func (a *app) post(fn func()) {
+	if a.postFn != nil {
+		a.postFn(fn)
+		return
+	}
 	if a.win == nil {
 		return
 	}
@@ -240,11 +256,21 @@ func (a *app) redraw() {
 
 var invalidateWindow = (*mygo.Window).Invalidate
 
+// Remember following before a hidden window can discard its scroll layout.
+func (a *app) suspendMainWindow() {
+	if a.lyricBrowseUntil.IsZero() {
+		a.lyricResume = true
+	}
+}
+
 // resumeMainWindow rebuilds playback UI from the audio clock instead of
 // presenting the frame cached before minimization. Focus is also a resume
 // signal: Wayland does not consistently report iconified/restored states.
 func (a *app) resumeMainWindow() {
 	if a.win != nil {
+		if a.lyricBrowseUntil.IsZero() {
+			a.lyricResume = true
+		}
 		invalidateWindow(a.win)
 	}
 }
@@ -320,6 +346,7 @@ func Run() error {
 		a.pl.Normalize = func() string { return a.settings.volumeBalance() }
 		a.pl.PlaybackFade = func() bool { return a.settings.PlaybackFade }
 		a.pl.Cache = newSongCache(a.settings)
+		a.art.disk = a.pl.Cache
 		a.cacheMoving = a.settings.PendingCacheDir != nil
 		a.pl.Changed = a.playerChanged
 		a.volume = a.settings.Volume
@@ -359,6 +386,8 @@ func Run() error {
 		a.win.OnShow(a.syncDock)
 		a.win.OnShow(a.resumeMainWindow)
 		a.win.OnHide(a.syncDock)
+		a.win.OnHide(a.suspendMainWindow)
+		a.win.OnMinimize(a.suspendMainWindow)
 		a.win.OnRestore(a.resumeMainWindow)
 		// Shown or switched to the morning after, it shows the new day's.
 		a.win.OnFocus(func() {

@@ -388,9 +388,9 @@ func (a *app) npTabs() []npTab {
 		if a.captionsShown() {
 			tabs = append(tabs, npTab{paneCaptions, "字幕"})
 		}
-		return append(tabs, npTab{paneQueue, "待播清单"}, npTab{paneComments, "评论"})
+		return append(tabs, npTab{paneQueue, "播放列表"}, npTab{paneComments, "评论"})
 	}
-	return []npTab{{paneLyrics, "歌词"}, {paneStage, "律动"}, {paneQueue, "待播清单"}, {paneWall, "选歌"}, {paneComments, "评论"}}
+	return []npTab{{paneLyrics, "歌词"}, {paneStage, "律动"}, {paneQueue, "播放列表"}, {paneWall, "选歌"}, {paneComments, "评论"}}
 }
 
 func (a *app) paneTabs(c *ui.Context) {
@@ -558,7 +558,7 @@ func (a *app) lyricsPane(c *ui.Context, tr *qqmusic.Track, h float32) {
 		a.lyricTrack, a.lyricAt = tr.ID, -2
 		a.lyricScroll, a.lyricGlide, a.lyricBrowseUntil = ui.ScrollState{}, lyricGlide{}, time.Time{}
 	}
-	lag := a.lyricStep(c)
+	lag, resumed := a.lyricStep(c)
 
 	scroll := ui.Scroll(c.Key("lyrics")).Grow(1).TrackScroll(&a.lyricScroll).Padding(0, 8, h*0.5, 0)
 	dim, quiet := a.quietShown(c, scroll, tr, lines, loaded)
@@ -577,7 +577,7 @@ func (a *app) lyricsPane(c *ui.Context, tr *qqmusic.Track, h float32) {
 	// Builds can repeat before layout commits. Keep waiting for that entire
 	// frame, so following uses the new geometry rather than a previous pass.
 	resized := !a.lyricSizeAt.IsZero() && a.lyricSizeAt.Equal(c.Now())
-	a.timedLines(c, scroll, lines, pos, cur, lag, linesStyle{size: size, translationSize: 17 * size / lyricsFontSizeDefault, weight: 800, lineHeight: 1.25, quiet: quiet, relayout: resized}, nil)
+	a.timedLines(c, scroll, lines, pos, cur, lag, linesStyle{size: size, translationSize: 17 * size / lyricsFontSizeDefault, weight: 800, lineHeight: 1.25, quiet: quiet, relayout: resized || resumed}, nil)
 }
 
 // linesStyle is how timedLines sets its lines: the size, weight and
@@ -783,7 +783,27 @@ func (g *lyricGlide) step(c *ui.Context, s *ui.ScrollState) (lag float32, scroll
 }
 
 // 手动滚动后暂缓跟随，暂停时保留浏览位置，播放时按最后一次滚动计时。
-func (a *app) lyricStep(c *ui.Context) float32 {
+func (a *app) lyricStep(c *ui.Context) (float32, bool) {
+	if c.WindowHidden() {
+		if a.lyricBrowseUntil.IsZero() {
+			a.lyricResume = true
+		}
+		return 0, true
+	}
+	if a.lyricResume {
+		a.lyricResume = false
+		if a.lyricBrowseUntil.IsZero() {
+			// Restoration can replace the scroll offset without any user
+			// input. Do not interpret that change as browsing. Follow using
+			// the restored layout's committed bounds in the next frame.
+			a.lyricGlide = lyricGlide{set: a.lyricScroll.Y}
+			a.lyricAt = -2
+			a.lyricResumeAt = c.Now()
+		}
+	}
+	if !a.lyricResumeAt.IsZero() && a.lyricResumeAt.Equal(c.Now()) {
+		return 0, true
+	}
 	lag, scrolled := a.lyricGlide.step(c, &a.lyricScroll)
 	playing := a.pl.Playing()
 	resumed := playing && !a.lyricPlaying
@@ -801,7 +821,7 @@ func (a *app) lyricStep(c *ui.Context) float32 {
 			a.lyricBrowseUntil, a.lyricAt = time.Time{}, -2
 		}
 	}
-	return lag
+	return lag, false
 }
 
 // queuePane lists the whole queue in play order, the track playing marked
@@ -816,6 +836,7 @@ func (a *app) queuePane(c *ui.Context) {
 // queueTracks shares playback and menus between the page and its floating queue.
 func (a *app) queueTracks(c *ui.Context, list *ui.ListState, lastAt *int, p palette) ui.Element {
 	pl := a.pl
+	queue := pl.Queue()
 	order, at := pl.PlayOrder()
 	// Opened, it shows the track playing at its top; after, it follows it
 	// as little as keeps it in view.
@@ -830,10 +851,10 @@ func (a *app) queueTracks(c *ui.Context, list *ui.ListState, lastAt *int, p pale
 	list.Key = func(row int) any { return order[row] }
 	return ui.List(c.Key("queue"), list, len(order), func(r int) {
 		i := order[r]
-		tr := &pl.Queue()[i]
+		tr := &queue[i]
 		playing := r == at
 		row := ui.ButtonBase(c.Key(i)).Height(58).PaddingX(10).Gap(14).Radius(12).AlignItems(ui.Center).FocusRing(false).Label(tr.Name).
-			ContextMenu(a.songItems(tr, 0))
+			ContextMenu(a.queueSongItems(tr, i))
 		switch {
 		case playing:
 			row.Background(p.press)

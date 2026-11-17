@@ -83,9 +83,18 @@ func TestTaskbarLyricsTwoLineContent(t *testing.T) {
 						if layout.secondary == nil {
 							t.Fatal("compact layout discarded the second sentence")
 						}
-						_, secondaryHeight := layout.secondary.Size()
-						if secondaryHeight != layout.originalHeight || layout.height > float32(height) {
-							t.Fatalf("rows differ in size or exceed taskbar: first=%v second=%v total=%v available=%d", layout.originalHeight, secondaryHeight, layout.height, height)
+						cache := ui.Local(c.Root(), "lyric-text-layouts", func() lyricLayoutCache { return lyricLayoutCache{} })
+						var originalFont, secondaryFont ui.Font
+						for _, entry := range cache.entries[:cache.count] {
+							if entry.layout == layout.text {
+								originalFont = entry.key.font
+							}
+							if entry.layout == layout.secondary {
+								secondaryFont = entry.key.font
+							}
+						}
+						if originalFont.Size <= 0 || originalFont != secondaryFont || layout.height > float32(height) {
+							t.Fatalf("rows differ in font or exceed taskbar: first=%+v second=%+v total=%v available=%d", originalFont, secondaryFont, layout.height, height)
 						}
 					} else if layout.secondary != nil {
 						t.Fatal("foreign song without translation borrowed the next sentence")
