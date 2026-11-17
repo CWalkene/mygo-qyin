@@ -28,6 +28,7 @@ const (
 	pagePurchased
 	pageSettings
 	pageSongShelf
+	pageSquare
 )
 
 type route struct {
@@ -108,6 +109,7 @@ type app struct {
 	homeLoading bool
 	homeAt      time.Time // when what the home page shows was asked for
 	homeGen     int
+	square      squareState
 
 	playlists       map[int64]*qqmusic.Playlist
 	playlistLRU     []int64
@@ -162,6 +164,7 @@ type app struct {
 	lyricResumeAt    time.Time
 	lyricTrack       int64
 	lyricSize        float32   // size used for the preceding lyrics layout
+	lyricFont        string    // font used for the preceding lyrics layout
 	lyricSizeAt      time.Time // frame in which the lyrics changed size
 	queueList        ui.ListState
 	queueAt          int // the row of the queue pane last scrolled to, -1 while it is hidden

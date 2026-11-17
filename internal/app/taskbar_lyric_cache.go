@@ -6,6 +6,7 @@ type taskbarLyricLayoutKey struct {
 	text, secondary, family string
 	height                  float32
 	dark, preview, timed    bool
+	secondaryTimed          bool
 }
 
 type taskbarLyricLayoutEntry struct {
@@ -20,21 +21,24 @@ type taskbarLyricLayoutCache struct {
 
 // Retain the final fitted size, not just its text. A compact taskbar otherwise
 // measures the large sentence and then its smaller replacement on every tick.
-func retainedTaskbarLyricLayout(c *ui.Context, content desktopLyricContent, dark bool, height float32) taskbarLyricLayout {
+func retainedTaskbarLyricLayout(c *ui.Context, content desktopLyricContent, dark bool, height float32, family string) taskbarLyricLayout {
 	secondary := content.translation
 	preview := secondary == "" && content.preview != ""
 	if preview {
 		secondary = content.preview
 	}
 	key := taskbarLyricLayoutKey{
-		text: content.text, secondary: secondary, family: c.Theme().Font,
+		text: content.text, secondary: secondary, family: family,
 		height: height, dark: dark, preview: preview,
-		timed: content.line.Timed && len(content.line.Words) > 0,
+		timed:          content.line.Timed && len(content.line.Words) > 0,
+		secondaryTimed: preview && content.secondaryLine.Timed && len(content.secondaryLine.Words) > 0,
 	}
 	cache := ui.Local(c.Root(), "taskbar-fitted-lyrics", func() taskbarLyricLayoutCache { return taskbarLyricLayoutCache{} })
 	for i := 0; i < cache.count; i++ {
 		entry := cache.entries[i]
-		if entry.key == key && (!key.timed || entry.layout.words.matches(content.line.Words)) {
+		if entry.key == key &&
+			(!key.timed || entry.layout.words.matches(content.line.Words)) &&
+			(!key.secondaryTimed || entry.layout.secondaryWords.matches(content.secondaryLine.Words)) {
 			copy(cache.entries[1:i+1], cache.entries[:i])
 			cache.entries[0] = entry
 			return entry.layout
@@ -57,8 +61,13 @@ func retainedTaskbarLyricLayout(c *ui.Context, content desktopLyricContent, dark
 		layout.width, layout.originalHeight = layout.text.Size()
 		layout.height = layout.originalHeight
 		if secondary != "" {
-			layout.secondary = retainedLyricText(c, secondary, font, ui.TextShape{}, ui.Color{})
-			layout.secondaryOutline = layout.secondary
+			layout.secondaryOutline = retainedLyricText(c, secondary, font, ui.TextShape{}, ui.Color{})
+			if key.secondaryTimed {
+				layout.secondaryWords = retainedLyricWords(c, content.secondaryLine.Words, font, ui.TextShape{}, true)
+				layout.secondary = layout.secondaryWords.layout
+			} else {
+				layout.secondary = layout.secondaryOutline
+			}
 			var h float32
 			layout.secondaryWidth, h = layout.secondary.Size()
 			layout.height += h + 1
