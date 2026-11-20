@@ -237,6 +237,7 @@ func (d *taskbarLyrics) closeControls() {
 	open := d.controlsOpen || d.controlsClosing
 	w := d.controls
 	d.controls, d.controlsOpen, d.scrub = nil, false, scrubState{}
+	d.volumeUntil = time.Time{}
 	d.controlsHovered, d.controlsLeft = false, time.Time{}
 	d.controlsEntering, d.controlsClosing = false, false
 	d.controlsReady = false

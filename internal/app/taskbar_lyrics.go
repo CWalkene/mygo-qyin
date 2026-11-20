@@ -31,6 +31,7 @@ type taskbarLyrics struct {
 	coverMainFocused  bool
 	coverFocusSet     bool
 	scrub             scrubState
+	volumeUntil       time.Time
 	stop              func()
 	placement         taskbarLyricsPlacement
 	parent            uintptr

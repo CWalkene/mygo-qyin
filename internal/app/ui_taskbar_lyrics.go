@@ -114,6 +114,14 @@ func (d *taskbarLyrics) coverView(c *ui.Context) {
 var taskbarControlsIcon = strokeIcon(`<rect x="3" y="4" width="18" height="16" rx="3"/><path d="M3 9h18M8 13h7M8 16h3"/><circle cx="16.5" cy="16" r="1.5"/>`)
 
 func (d *taskbarLyrics) coverButton(c *ui.Context, cover ui.Element, url string, size float32) {
+	cover.HandleInput(func(ev ui.InputEvent) bool {
+		if !d.a.scrollVolume(ev) {
+			return false
+		}
+		d.volumeUntil = ev.Time.Add(time.Second)
+		d.a.redraw()
+		return true
+	})
 	d.hoverControls(c, cover.Hovered(), false)
 	active := float32(0)
 	if cover.Hovered() || cover.FocusVisible() || d.controlsOpen {

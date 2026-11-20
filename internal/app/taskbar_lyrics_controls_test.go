@@ -2,6 +2,7 @@ package app
 
 import (
 	"image/png"
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
@@ -113,6 +114,52 @@ func TestTaskbarLyricsControlsCoverHover(t *testing.T) {
 				t.Fatal("Escape did not dismiss locally or cover interaction changed playback")
 			}
 		})
+	}
+}
+
+func TestTaskbarLyricsControlsVolume(t *testing.T) {
+	a, d := taskbarControlsFixture()
+	a.volume = 0.5
+	cover := ui.NewTester(d.coverView, 34, 34)
+	cover.Frame()
+	if r, ok := cover.Find("打开主窗口"); ok {
+		cover.Wheel(r.X+r.W/2, r.Y+r.H/2, 0, -99)
+	} else {
+		t.Fatal("找不到任务栏封面")
+	}
+	if math.Abs(a.volume-0.55) > 1e-9 || d.controlsOpen {
+		t.Fatalf("封面向上滚动后音量为 %v，面板展开状态为 %t", a.volume, d.controlsOpen)
+	}
+	cover.Wheel(17, 17, 0, 99)
+	cover.Wheel(-10, -10, 0, 99)
+	if math.Abs(a.volume-0.5) > 1e-9 {
+		t.Fatalf("封面向下滚动或移出封面后音量为 %v", a.volume)
+	}
+
+	d.controlsOpen = true
+	d.coverHovered = true
+	panel := ui.NewTester(d.controlsView, taskbarControlsWidth, taskbarControlsHeight)
+	panel.Move(180, 60)
+	panel.Advance(taskbarVolumeFade)
+	hint, ok := panel.Find("音量：50%")
+	if !ok || math.Abs(float64(hint.X+hint.W/2-taskbarControlsWidth/2)) > 1 {
+		t.Fatalf("音量提示未在面板底部居中：%+v，存在=%t", hint, ok)
+	}
+	panel.Advance(650 * time.Millisecond)
+	cover.Advance(panel.Now().Sub(cover.Now()))
+	cover.Wheel(17, 17, 0, -99)
+	panel.Frame()
+	panel.Advance(999 * time.Millisecond)
+	if _, ok := panel.Find("音量：55%"); !ok {
+		t.Fatal("再次滚动后音量提示未更新或提前消失")
+	}
+	panel.Advance(taskbarVolumeFade / 2)
+	if _, ok := panel.Find("音量：55%"); !ok {
+		t.Fatalf("音量提示未淡出：面板展开=%t，距超时=%v，文本=%v", d.controlsOpen, d.volumeUntil.Sub(panel.Now()), panel.Texts())
+	}
+	panel.Advance(taskbarVolumeFade)
+	if _, ok := panel.Find("音量：55%"); ok || a.pl.Position() != 40*time.Second || a.pl.Playing() {
+		t.Fatal("音量提示未消失，或调节音量改变了播放状态")
 	}
 }
 

@@ -1,6 +1,9 @@
 package app
 
 import (
+	"fmt"
+	"time"
+
 	"github.com/egoist/mygo/ui"
 	"lilt/internal/qqmusic"
 )
@@ -84,8 +87,31 @@ func (d *taskbarLyrics) controlsView(c *ui.Context) {
 			ui.Row(c).Height(14).Justify(ui.SpaceBetween).TextColor(muted).Children(func() {
 				ui.Text(c, clock(position)).FontSize(11.5).FontFeatures("tnum").TextColor(muted)
 				ui.Text(c, clock(pl.Duration())).FontSize(11.5).FontFeatures("tnum").TextColor(muted)
+				d.controlsVolumeFeedback(c, muted)
 			})
 		})
 	})
 	d.hoverControls(c, panel.Hovered(), true)
+}
+
+const taskbarVolumeFade = 150 * time.Millisecond
+
+func (d *taskbarLyrics) controlsVolumeFeedback(c *ui.Context, color ui.Color) {
+	root := c.Root()
+	initialized := ui.Local(root, "volume-feedback-initialized", func() bool { return false })
+	if !*initialized {
+		root.Jump("volume-feedback", 0)
+		*initialized = true
+	}
+	wait := d.volumeUntil.Sub(c.Now())
+	if wait > 0 {
+		c.After(wait)
+	}
+	opacity := root.AnimateTo("volume-feedback", b2f(wait > 0), ui.Animation{Duration: taskbarVolumeFade, Ease: ui.EaseOut, NonMotion: true})
+	if opacity > 0 {
+		ui.Box(c.Key("volume-feedback")).Absolute().Fill().Center().Children(func() {
+			ui.Text(c, fmt.Sprintf("音量：%.0f%%", d.a.volume*100)).
+				FontSize(11.5).FontFeatures("tnum").TextColor(color).Opacity(opacity)
+		})
+	}
 }
