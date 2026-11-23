@@ -32,6 +32,19 @@ func (a *app) setTaskbarLyricsMaterial(material string) {
 	a.redraw()
 }
 
+func (a *app) setTaskbarLyricsCover(show bool) {
+	a.settings.TaskbarLyricsHideCover = !show
+	a.settings.save()
+	if d := a.taskbarLyrics; d != nil {
+		if !show {
+			d.destroyCoverWindow()
+		} else {
+			d.syncCoverWindow()
+		}
+	}
+	a.redraw()
+}
+
 // Only the cover owns an interactive taskbar rectangle; the lyric host stays
 // transparent to input, including clicks sent to Explorer's other threads.
 func (d *taskbarLyrics) syncCoverWindow() {
@@ -39,7 +52,7 @@ func (d *taskbarLyrics) syncCoverWindow() {
 		return
 	}
 	tr := d.a.pl.Current()
-	if !d.visible || !d.a.settings.TaskbarLyrics || d.win == nil || d.win.IsDestroyed() || tr == nil || tr.Album.PicURL == "" {
+	if !d.visible || !d.a.settings.TaskbarLyrics || !d.a.settings.showTaskbarLyricsCover() || d.win == nil || d.win.IsDestroyed() || tr == nil || tr.Album.PicURL == "" {
 		d.destroyCoverWindow()
 		return
 	}
@@ -169,7 +182,7 @@ func (d *taskbarLyrics) openControls() {
 		return
 	}
 	tr := d.a.pl.Current()
-	if !d.visible || !d.a.settings.TaskbarLyrics || tr == nil || tr.Album.PicURL == "" || d.a.quitting {
+	if !d.visible || !d.a.settings.TaskbarLyrics || !d.a.settings.showTaskbarLyricsCover() || tr == nil || tr.Album.PicURL == "" || d.a.quitting {
 		return
 	}
 	d.controlsOpen = true
@@ -190,9 +203,13 @@ func (d *taskbarLyrics) openControls() {
 		return
 	}
 	bounds := d.coverWin.Bounds()
+	placement := mygo.PlacementTopStart
+	if d.placement.rightAligned {
+		placement = mygo.PlacementTopEnd
+	}
 	w := mygo.NewFlyout(mygo.FlyoutOptions{
 		Parent: d.coverWin, Anchor: mygo.Rectangle{Width: bounds.Width, Height: bounds.Height},
-		Placement: mygo.PlacementTopStart, Gap: 16, Width: taskbarControlsWidth, Height: taskbarControlsHeight,
+		Placement: placement, Gap: 16, Width: taskbarControlsWidth, Height: taskbarControlsHeight,
 		Shadow: true, Hidden: true, Vibrancy: mygo.VibrancyAcrylic, Content: ui.View(d.controlsView),
 	})
 	// Windows can enable a backdrop later only when the window was created

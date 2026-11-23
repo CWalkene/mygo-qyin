@@ -231,6 +231,43 @@ func TestConcurrentQQRefreshAndAccountReplacement(t *testing.T) {
 	}
 }
 
+func TestQQRefreshRetriesPersistenceWithoutReusingRotatedToken(t *testing.T) {
+	refreshes := 0
+	fakeAuthServer(t, func(w http.ResponseWriter, r *http.Request) {
+		refreshes++
+		io.WriteString(w, `{"code":0,"req":{"code":0,"data":{"musicid":"10001","musickey":"new-key","loginType":2,"refresh_token":"rotated-token"}}}`)
+	})
+	original := Session{MusicID: "10001", MusicKey: "expired", LoginType: 2, CreatedAt: 1, ExpiresIn: 1, RefreshToken: "old-token", Device: &wechatDevice{}}
+	b, _ := json.Marshal(original)
+	stored, writes := memorySessionStore(t, b)
+	setSession(original)
+	persist := writePersistedSession
+	attempts := 0
+	writePersistedSession = func(b []byte) error {
+		attempts++
+		if attempts <= 2 {
+			return errors.New("private-storage-error")
+		}
+		return persist(b)
+	}
+	for i := 0; i < 2; i++ {
+		_, err := activeSession()
+		if err == nil || !strings.Contains(SessionErrorMessage(err), "S104") || SessionNeedsLogin(err) {
+			t.Fatalf("persistence failure not reported: %v", err)
+		}
+		if !bytes.Equal(*stored, b) || sessionSnapshot().RefreshToken != "rotated-token" || refreshes != 1 {
+			t.Fatal("persistence failure lost the rotated token or overwrote the old credential")
+		}
+	}
+	if _, err := activeSession(); err != nil || refreshes != 1 || *writes != 1 {
+		t.Fatalf("retry did not save the rotated credential: %v", err)
+	}
+	setSession(Session{})
+	if ok, err := RestoreSession(); !ok || err != nil || sessionSnapshot().RefreshToken != "rotated-token" {
+		t.Fatal("successfully retried persistence did not survive restart")
+	}
+}
+
 type testSessionSecrets struct {
 	entry    []byte
 	writeErr error
