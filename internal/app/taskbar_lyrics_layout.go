@@ -92,10 +92,14 @@ func taskbarLyricsFreeSpaceRight(length, requested, minimum, gap int, occupied [
 	return length - x - width, width
 }
 
-// Keep left-aligned lyrics from jumping past the centered taskbar buttons.
+// Keep lyrics on their chosen half so centered taskbar buttons are not crossed.
 func taskbarLyricsPlacementSpace(length, requested, minimum, gap int, occupied []taskbarLyricsInterval, rightAligned bool) (int, int) {
 	if rightAligned {
-		return taskbarLyricsFreeSpaceRight(length, requested, minimum, gap, occupied)
+		x, width := taskbarLyricsFreeSpaceRight(length, requested, minimum, gap, occupied)
+		if width == 0 || x+width <= length/2 {
+			return 0, 0
+		}
+		return x, width
 	}
 	x, width := taskbarLyricsFreeSpace(length, requested, minimum, gap, occupied)
 	if width == 0 || x >= length/2 {

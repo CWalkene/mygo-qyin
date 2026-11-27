@@ -118,6 +118,7 @@ func (a *app) signedIn(prof *qqmusic.Profile) {
 		a.pl.ClearErr()
 	}
 	a.mine, a.saved, a.recPlaylists, a.liked = nil, nil, nil, nil
+	a.likeGen, a.programLikeGen = nil, nil
 	a.clearSongShelves()
 	a.likedPrograms, a.askedPrograms = nil, nil
 	a.likedAlbums = nil
@@ -260,7 +261,10 @@ func (a *app) closeLoginSoon(gen int) {
 }
 
 func (a *app) signOut() {
-	qqmusic.CancelQR(a.login.key)
+	if a.login.key != "" {
+		qqmusic.CancelQR(a.login.key)
+		a.login.key = ""
+	}
 	a.login.gen++
 	qqmusic.Logout()
 	a.signedIn(nil)
@@ -335,8 +339,9 @@ func (a *app) loginDialog(c *ui.Context) {
 			})
 		})
 	})
-	if !l.open {
+	if !l.open && l.key != "" {
 		qqmusic.CancelQR(l.key)
+		l.key = ""
 	}
 }
 
